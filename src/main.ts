@@ -13,7 +13,18 @@ import { mountWheel, renderWheel } from "./wheel";
 function initChrome() {
   const chrome = mountChrome({
     productName: "Color Editor",
-    menus: [],
+    // No File-menu actions specific to color-editor — close-window / quit
+    // are auto-included so users still get a proper File menu.
+    actions: {},
+    // Slot-mode shortcuts surface as inline mode-bar buttons rather than
+    // menu items; bound here so power users can flip modes from the keyboard.
+    bindings: {
+      "Ctrl+3": () => setMode(3),
+      "Ctrl+6": () => setMode(6),
+      // Note: Ctrl+0 / Ctrl+1 are krill-canonical for zoom, but color-editor
+      // doesn't zoom — using Alt+0 to avoid the convention clash.
+      "Alt+0":  () => setMode(12),
+    },
     showStatusLine: true,
   });
   chrome.viewport.id = "app";
@@ -107,32 +118,9 @@ function updateStatus() {
   if (dirty) dirty.dataset.dirty = String(isDirty());
 }
 
-function installKeybindings() {
-  const mac = navigator.platform.toLowerCase().includes("mac");
-  window.addEventListener("keydown", (e) => {
-    if (isTextTarget(e.target)) return;
-    const mod = mac ? e.metaKey : e.ctrlKey;
-    if (!mod || e.altKey) return;
-    const k = e.key;
-    let handled = true;
-    if (k === "3") setMode(3);
-    else if (k === "6") setMode(6);
-    else if (k === "0" || k === "1") setMode(12);
-    else if (k.toLowerCase() === "q") void getCurrentWindow().close();
-    else handled = false;
-    if (handled) { e.preventDefault(); e.stopImmediatePropagation(); }
-  }, { capture: true });
-}
-
-function isTextTarget(t: EventTarget | null): boolean {
-  if (!(t instanceof HTMLElement)) return false;
-  return t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable;
-}
-
 function boot() {
   initChrome();
   installModeBar();
-  installKeybindings();
 
   const ring   = document.getElementById("wheel")!;
   const labels = document.getElementById("wheel-labels")!;
