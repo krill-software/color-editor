@@ -25,14 +25,12 @@ function initChrome() {
       // doesn't zoom — using Alt+0 to avoid the convention clash.
       "Alt+0":  () => setMode(12),
     },
+    showAuxPane: true,
     showStatusLine: true,
   });
-  chrome.viewport.id = "app";
 
-  // Left column: wheel + picker + mode bar.
-  const left = document.createElement("section");
-  left.id = "left";
-  left.innerHTML = `
+  // MAIN (right): the colour picker workbench — wheel + sliders + mode bar.
+  chrome.viewport.innerHTML = `
     <div id="wheel-wrap">
       <div id="wheel"></div>
       <div id="wheel-hole"></div>
@@ -42,12 +40,9 @@ function initChrome() {
     <div id="picker"></div>
     <div id="mode-bar"></div>
   `;
-  chrome.viewport.appendChild(left);
 
-  // Right column: hex / rgb / css output panels.
-  const right = document.createElement("aside");
-  right.id = "right";
-  right.innerHTML = `
+  // AUX (left): hex / rgb / css output panels.
+  chrome.aux!.innerHTML = `
     <section class="output">
       <h3>Hex</h3>
       <pre id="out-hex"></pre>
@@ -61,16 +56,17 @@ function initChrome() {
       <pre id="out-css"></pre>
     </section>
   `;
-  chrome.viewport.appendChild(right);
 
-  // Status line: name, dirty indicator, mode label.
-  const sl = chrome.statusLine!;
-  for (const id of ["status-name", "status-dirty", "status-mode"]) {
-    const span = document.createElement("span");
-    span.id = id;
-    if (id === "status-dirty") span.setAttribute("aria-hidden", "true");
-    sl.appendChild(span);
-  }
+  // Status line: filename in info (left), slot mode in state (right).
+  // Dirty marker rides the titlebar via body[data-dirty="true"].
+  const nameSpan = document.createElement("span");
+  nameSpan.id = "status-name";
+  chrome.statusInfo!.appendChild(nameSpan);
+
+  const modeSpan = document.createElement("span");
+  modeSpan.id = "status-mode";
+  modeSpan.classList.add("mono");
+  chrome.statusState!.appendChild(modeSpan);
 }
 
 function installModeBar() {
@@ -114,8 +110,7 @@ function updateStatus() {
   };
   set("status-name", doc.palette.name || "untitled");
   set("status-mode", `${doc.palette.mode} slots`);
-  const dirty = document.getElementById("status-dirty");
-  if (dirty) dirty.dataset.dirty = String(isDirty());
+  document.body.dataset.dirty = String(isDirty());
 }
 
 function boot() {

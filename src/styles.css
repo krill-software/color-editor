@@ -85,7 +85,6 @@
   --fm-serif: "Charter", Georgia, "Liberation Serif", serif;
   --fm-mono:  "Hasklig", "Source Code Pro", "JetBrains Mono", ui-monospace, monospace;
 
-  --right-w: 320px;
   --wheel-d: 360px;
   --wheel-r: 180px;
 }
@@ -93,21 +92,10 @@
 /* Use Inter for the body so chrome + content match. */
 html, body { font-family: var(--fm-sans); }
 
-body {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-}
+/* Body grid (titlebar / aux+main / status) is owned by the package.
+ * AUX (left) = output panels; MAIN (right) = wheel + picker + mode-bar. */
 
-/* Main layout */
-
-#app {
-  display: grid;
-  grid-template-columns: 1fr var(--right-w);
-  min-height: 0;
-  user-select: none;
-}
-
-#left {
+#viewport {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -270,19 +258,16 @@ body {
   font-weight: 600;
 }
 
-/* Right panel */
+/* Output panels — live in the AUX pane on the left. */
 
-#right {
-  background: var(--fm-bg);
-  border-left: 1px solid var(--fm-rule);
-  overflow: auto;
+#aux {
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   user-select: text;
 }
-#right .output h3 {
+#aux .output h3 {
   margin: 0 0 6px;
   font-size: 10.5px;
   font-weight: 600;
@@ -290,7 +275,7 @@ body {
   letter-spacing: 0.08em;
   color: var(--fm-muted);
 }
-#right pre {
+#aux pre {
   margin: 0;
   font-family: var(--fm-mono);
   font-size: 12.5px;
