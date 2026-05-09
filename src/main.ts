@@ -28,6 +28,7 @@ function initChrome() {
     showAuxPane: true,
     showStatusLine: true,
   });
+  titleEl = chrome.title;
 
   // MAIN (right): the colour picker workbench — wheel + sliders + mode bar.
   chrome.viewport.innerHTML = `
@@ -95,9 +96,12 @@ function syncModeBar() {
   }
 }
 
+let titleEl: HTMLElement | null = null;
+
 function updateTitle() {
   const name = doc.palette.name || "untitled";
   const mark = isDirty() ? " •" : "";
+  if (titleEl) titleEl.textContent = name;
   const label = `${name}${mark} — Color Editor`;
   document.title = label;
   getCurrentWindow().setTitle(label).catch(() => {});
