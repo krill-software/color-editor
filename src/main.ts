@@ -1,7 +1,7 @@
 import "@krill-software/desktop-ui/styles";
 import "./styles.css";
 
-import { mountChrome } from "@krill-software/desktop-ui";
+import { mountChrome, showBootError } from "@krill-software/desktop-ui";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { renderPanels, mountPanels } from "./panels";
@@ -153,4 +153,7 @@ function boot() {
   updateStatus();
 }
 
-boot();
+try { boot(); } catch (e) {
+  console.error("boot failed:", e);
+  showBootError(e);
+}
