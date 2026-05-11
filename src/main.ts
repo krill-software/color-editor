@@ -58,12 +58,9 @@ function initChrome() {
     </section>
   `;
 
-  // Status line: filename in info (left), slot mode in state (right).
-  // Dirty marker rides the titlebar via body[data-dirty="true"].
-  const nameSpan = document.createElement("span");
-  nameSpan.id = "status-name";
-  chrome.statusInfo!.appendChild(nameSpan);
-
+  // Status line: slot mode in state (right). Filename rides the titlebar;
+  // dirty marker rides body[data-dirty]. The info half stays empty since
+  // a palette doesn't have natural file-identity metrics to display.
   const modeSpan = document.createElement("span");
   modeSpan.id = "status-mode";
   modeSpan.classList.add("mono");
@@ -112,7 +109,6 @@ function updateStatus() {
     const el = document.getElementById(id);
     if (el) el.textContent = v;
   };
-  set("status-name", doc.palette.name || "untitled");
   set("status-mode", `${doc.palette.mode} slots`);
   document.body.dataset.dirty = String(isDirty());
 }
