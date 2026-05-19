@@ -27,6 +27,7 @@ function initChrome() {
     },
     showAuxPane: true,
     showStatusLine: true,
+    updater: true,
   });
   titleEl = chrome.title;
 

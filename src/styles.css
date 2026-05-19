@@ -89,8 +89,18 @@
   --wheel-r: 180px;
 }
 
+::selection {
+  background: var(--fm-selection);
+  text-shadow: none;
+}
+
 /* Use Inter for the body so chrome + content match. */
-html, body { font-family: var(--fm-sans); }
+html, body {
+  font-family: var(--fm-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "calt" 1, "liga" 1;
+}
 
 /* Body grid (titlebar / aux+main / status) is owned by the package.
  * AUX (left) = output panels; MAIN (right) = wheel + picker + mode-bar. */
