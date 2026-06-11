@@ -58,6 +58,26 @@ fn dev_test_file() -> Option<String> {
     kdev::test_file(env!("CARGO_MANIFEST_DIR"), &["test.css"])
 }
 
+/// Pick a color from anywhere on screen via the XDG desktop portal
+/// (org.freedesktop.portal.Screenshot.PickColor). The compositor runs the
+/// eyedropper UI; we get the picked color back as sRGB 0..1.
+#[tauri::command]
+async fn pick_screen_color() -> Result<String, String> {
+    let color = ashpd::desktop::Color::pick()
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .response()
+        .map_err(|e| e.to_string())?;
+    let to8 = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+    Ok(format!(
+        "#{:02x}{:02x}{:02x}",
+        to8(color.red()),
+        to8(color.green()),
+        to8(color.blue())
+    ))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -71,6 +91,7 @@ pub fn run() {
             load_state,
             save_state,
             dev_test_file,
+            pick_screen_color,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -262,13 +262,6 @@ body[data-dirty="true"] .tab-btn[data-tab="edit"] span::after {
   cursor: pointer;
 }
 .shade-bar[data-root="true"] { flex: 1.6; font-size: 13.5px; }
-.shade-root-tag {
-  font-size: 10.5px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  opacity: 0.75;
-}
 .shade-save { opacity: 0; transition: opacity 100ms ease; display: inline-flex; }
 .shade-bar:hover .shade-save { opacity: 0.8; }
 

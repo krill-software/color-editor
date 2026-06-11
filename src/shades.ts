@@ -76,12 +76,7 @@ export function buildShadesPanel(
       const label = document.createElement("span");
       label.textContent = bar.hex;
       b.appendChild(label);
-      if (bar.isRoot) {
-        const tag = document.createElement("span");
-        tag.className = "shade-root-tag";
-        tag.textContent = "root";
-        b.appendChild(tag);
-      } else {
+      if (!bar.isRoot) {
         const mark = document.createElement("span");
         mark.className = "shade-save";
         mark.append(svgIcon("bookmark", 13));
