@@ -1,0 +1,8 @@
+remote_theme: krill-software/docs-theme@v4.3
+plugins:
+  - jekyll-remote-theme
+
+title: Color Editor
+slug: color-editor
+brand: color-editor
+version: 0.3.0
