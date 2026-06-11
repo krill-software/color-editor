@@ -1,12 +1,12 @@
-/* color-editor — named-CSS-variable theme workbench.
+/* color-editor — a calm color workbench.
  *
- * Uses the shell-app layout (shared with audio-editor / paint): desktop-ui's
- * default #titlebar + #status-line are hidden; the main pane carries its own
- * topbar with the window controls; the aux pane is a tabbed sidebar
- * (Discover / Saved / Edit).
+ * Chrome comes from desktop-ui's app layout (mountChrome layout:"app"):
+ * per-pane top strips, window controls, hamburger menu. This file only
+ * styles the app's own surfaces: the aux tab bar and the six panels
+ * (Discover / Picker / Saved / Shades / Wheel / Edit).
  *
- * The colors the user edits are CONTENT — arbitrary by design. The app's own
- * chrome stays strictly on the krill palette. */
+ * The colors the user works with are CONTENT — arbitrary by design. The
+ * app's own chrome stays strictly on the krill palette. */
 
 ::selection { background: var(--fm-selection); text-shadow: none; }
 
@@ -16,130 +16,20 @@ html, body {
   font-feature-settings: "calt" 1, "liga" 1;
 }
 
-/* Shell-app chrome ================================================= */
+.mono { font-family: var(--fm-mono, ui-monospace, monospace); }
 
-#titlebar, #status-line { display: none; }
-
-#viewport {
-  display: flex;
-  flex-direction: column;
-  position: relative;
-  background: var(--fm-bg);
-  overflow: hidden;
-}
-
-.main-content {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
-#aux {
-  background: rgba(48, 52, 63, 0.03);
-  border-right: 0;
-  display: flex;
-  flex-direction: column;
-  padding: 12px;
-}
-
-.main-topbar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 9px;
-  height: 44px;
-  padding: 0 16px;
-  flex-shrink: 0;
-  background: var(--fm-bg);
-}
-.main-title {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  font-family: var(--fm-mono);
-  font-size: 13px;
-  color: var(--fm-text);
-  white-space: nowrap;
-  overflow: visible;
-  pointer-events: none;
-}
-body[data-dirty="true"] .main-title::after {
-  content: "•";
-  position: absolute;
-  left: 100%;
-  top: 50%;
-  transform: translateY(-50%);
-  margin-left: 6px;
-  color: var(--fm-accent);
-}
-.main-topbar-controls { display: flex; align-items: center; gap: 9px; }
-.main-topbar-btn {
-  width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--fm-muted);
-  border-radius: 4px;
-  cursor: pointer;
-  padding: 0;
-  transition: background-color 100ms ease, color 100ms ease;
-}
-.main-topbar-btn:hover { background: var(--fm-rule); color: var(--fm-text); }
-.main-topbar-controls > .main-topbar-btn[data-kind="close"]:hover {
-  background: rgba(221, 117, 150, 0.25);
-  color: var(--fm-text);
-}
-
-.aux-topbar {
-  position: relative;
-  display: flex;
-  align-items: center;
-  height: 44px;
-  margin: -12px -12px 8px;
-  padding: 0 16px;
-  flex-shrink: 0;
-}
-
-/* Hamburger dropdown ---------------------------------------------------- */
-.menu-popover {
-  position: absolute;
-  top: 48px;
-  left: 16px;
-  min-width: 220px;
-  background: var(--fm-bg);
-  border: 1px solid var(--fm-rule-strong);
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(48, 52, 63, 0.16);
-  padding: 4px 0;
-  z-index: 1000;
-}
-.menu-popover-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-  padding: 6px 12px;
-  border: none;
-  background: transparent;
-  font: inherit;
-  font-size: 13px;
-  color: var(--fm-text);
-  text-align: left;
-  cursor: pointer;
-}
-.menu-popover-item:hover { background: var(--fm-rule); }
-.menu-popover-shortcut { color: var(--fm-muted); font-family: var(--fm-mono); font-size: 11px; }
-.menu-popover-sep { height: 1px; background: var(--fm-rule); margin: 4px 0; }
+/* desktop-ui's .main-content is a plain scroll area; the panels want to
+ * fill it so full-bleed surfaces (Discover chip, Picker plane) can flex. */
+.main-content { display: flex; }
 
 /* Tab bar (aux) ===================================================== */
 
-.tab-bar { display: flex; flex-direction: column; gap: 4px; }
+.tab-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 12px 12px;
+}
 .tab-btn {
   display: flex;
   align-items: center;
@@ -163,6 +53,13 @@ body[data-dirty="true"] .main-title::after {
   border-color: var(--fm-accent);
 }
 .tab-btn[data-active="true"] svg { color: var(--fm-accent); }
+
+/* The document lives in the Edit tab — its dirty bullet rides there. */
+body[data-dirty="true"] .tab-btn[data-tab="edit"] span::after {
+  content: "•";
+  color: var(--fm-accent);
+  margin-left: 6px;
+}
 
 /* Panels ============================================================ */
 
@@ -199,14 +96,24 @@ body[data-dirty="true"] .main-title::after {
   border: 1px solid var(--fm-rule-strong);
   box-shadow: 0 12px 36px rgba(48, 52, 63, 0.12);
 }
-/* hex + actions + hint form the pinned bottom cluster (chip flex:1 pushes
- * them down). */
+/* The hex readout is an input: type a color to see it. Styled as quiet
+ * text until hovered/focused. */
 .discover-hex {
+  width: 9ch;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  text-align: center;
   font-size: 18px;
   letter-spacing: 0.04em;
   color: var(--fm-text);
   text-transform: lowercase;
+  outline: none;
+  padding: 2px 4px;
+  transition: border-color 100ms ease;
 }
+.discover-hex:hover { border-color: var(--fm-rule-strong); }
+.discover-hex:focus { border-color: var(--fm-accent); }
 .discover-actions { display: flex; align-items: center; gap: 10px; }
 .pill-btn {
   width: 40px;
@@ -224,6 +131,201 @@ body[data-dirty="true"] .main-title::after {
 .pill-btn:hover { color: var(--fm-text); border-color: var(--fm-accent); }
 .pill-btn.pill-accent { background: var(--fm-text); color: var(--fm-bg); border-color: var(--fm-text); }
 .pill-btn.pill-accent:hover { background: var(--fm-accent); border-color: var(--fm-accent); }
+
+/* Picker ------------------------------------------------------------- */
+
+.panel-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  overflow: hidden;
+}
+.picker-plane {
+  position: relative;
+  align-self: stretch;
+  flex: 1;
+  min-height: 0;
+  border-radius: 14px;
+  border: 1px solid var(--fm-rule-strong);
+  box-shadow: 0 12px 36px rgba(48, 52, 63, 0.12);
+  cursor: crosshair;
+  touch-action: none;
+}
+/* Thumb ring: white on dark colors needs no theme var — it sits ON content. */
+.picker-thumb {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #fafaff;
+  box-shadow: 0 0 0 1px rgba(48, 52, 63, 0.4);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.picker-hue {
+  -webkit-appearance: none;
+  appearance: none;
+  align-self: stretch;
+  height: 14px;
+  border-radius: 7px;
+  border: 1px solid var(--fm-rule-strong);
+  /* The track IS the hue spectrum — content, not chrome. */
+  background: linear-gradient(to right,
+    #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+  cursor: pointer;
+}
+.picker-hue::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fafaff;
+  border: 1px solid rgba(48, 52, 63, 0.4);
+  box-shadow: 0 1px 4px rgba(48, 52, 63, 0.3);
+}
+.picker-hue::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fafaff;
+  border: 1px solid rgba(48, 52, 63, 0.4);
+  box-shadow: 0 1px 4px rgba(48, 52, 63, 0.3);
+}
+.picker-row { display: flex; align-items: center; gap: 12px; }
+.picker-chip {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--fm-rule-strong);
+}
+.picker-hex {
+  width: 110px;
+  border: 1px solid var(--fm-rule);
+  border-radius: 6px;
+  padding: 9px 10px;
+  background: var(--fm-bg);
+  color: var(--fm-text);
+  font-size: 14px;
+  text-align: center;
+  outline: none;
+}
+.picker-hex:focus { border-color: var(--fm-accent); }
+
+/* Saved-color picker strip (Shades + Wheel lead with it) ------------- */
+
+.saved-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+.saved-pick-swatch {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--fm-rule-strong);
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 80ms ease, box-shadow 100ms ease;
+}
+.saved-pick-swatch:hover { transform: translateY(-2px); }
+.saved-pick-swatch[data-selected="true"] {
+  box-shadow: 0 0 0 2px var(--fm-bg), 0 0 0 4px var(--fm-accent);
+}
+
+/* Shades -------------------------------------------------------------- */
+
+.panel-shades { display: flex; flex-direction: column; }
+.shade-ramp {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  max-width: 560px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--fm-rule-strong);
+  margin-bottom: 16px;
+}
+.shade-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: 1;
+  min-height: 34px;
+  border: none;
+  padding: 0 16px;
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+.shade-bar[data-root="true"] { flex: 1.6; font-size: 13.5px; }
+.shade-root-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+}
+.shade-save { opacity: 0; transition: opacity 100ms ease; display: inline-flex; }
+.shade-bar:hover .shade-save { opacity: 0.8; }
+
+/* Wheel --------------------------------------------------------------- */
+
+.panel-wheel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.panel-wheel .saved-pick { align-self: stretch; }
+.wheel-ring {
+  position: relative;
+  width: min(46vh, 380px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1px solid var(--fm-rule-strong);
+  padding: 0;
+  cursor: pointer;
+  box-shadow: 0 12px 36px rgba(48, 52, 63, 0.12);
+}
+/* Donut hole. */
+.wheel-ring::after {
+  content: "";
+  position: absolute;
+  inset: 26%;
+  border-radius: 50%;
+  background: var(--fm-bg);
+  border: 1px solid var(--fm-rule);
+}
+.wheel-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 20px 0 12px;
+}
+.wheel-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.wheel-swatch {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--fm-rule-strong);
+  border-radius: 7px;
+  padding: 0;
+  cursor: pointer;
+  transition: transform 80ms ease;
+}
+.wheel-swatch:hover { transform: translateY(-2px); }
+.wheel-swatch[data-root="true"] {
+  box-shadow: 0 0 0 2px var(--fm-bg), 0 0 0 4px var(--fm-accent);
+}
+.wheel-hex { font-size: 10.5px; color: var(--fm-muted); }
 
 /* Saved ------------------------------------------------------------- */
 
@@ -391,5 +493,3 @@ body[data-dirty="true"] .main-title::after {
   overflow: auto;
   user-select: text;
 }
-
-.mono { font-family: var(--fm-mono, ui-monospace, monospace); }

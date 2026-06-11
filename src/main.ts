@@ -1,7 +1,7 @@
 import "@krill-software/desktop-ui/styles";
 import "./styles.css";
 
-import { mountChrome, showBootError, checkForUpdates } from "@krill-software/desktop-ui";
+import { mountChrome, showBootError } from "@krill-software/desktop-ui";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -10,6 +10,8 @@ import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialo
 
 import { cssToPairs, themeToCss } from "./css";
 import { oklchToRgbClamped, rgbToHex } from "./oklch";
+import { buildPickerPanel, type PickerPanel } from "./picker";
+import { buildShadesPanel, type ShadesPanel } from "./shades";
 import {
   addRow,
   doc,
@@ -23,6 +25,8 @@ import {
   subscribe,
   themeFromPairs,
 } from "./state";
+import { pillBtn, svgIcon } from "./ui";
+import { buildWheelPanel, type WheelPanel } from "./wheel";
 
 interface CssRead {
   path: string;
@@ -35,20 +39,21 @@ interface AppState {
   saved?: string[];
 }
 
-type Tab = "discover" | "saved" | "edit";
+type Tab = "discover" | "picker" | "saved" | "shades" | "wheel" | "edit";
 
 // ---- DOM refs ---------------------------------------------------------
 
-let viewportEl: HTMLElement;
-let railEl: HTMLElement;
-let titleLabelEl: HTMLElement;
+let auxEl: HTMLElement;
 
 let panelDiscover: HTMLElement;
 let panelSaved: HTMLElement;
 let panelEdit: HTMLElement;
+let pickerPanel: PickerPanel;
+let shadesPanel: ShadesPanel;
+let wheelPanel: WheelPanel;
 
 let discoverChip: HTMLElement;
-let discoverHexEl: HTMLElement;
+let discoverHexInput: HTMLInputElement;
 let savedGridEl: HTMLElement;
 let rowsEl: HTMLElement;
 let emptyHintEl: HTMLElement;
@@ -61,7 +66,8 @@ let tab: Tab = "discover";
 let persisted: AppState = {};
 
 // Discovered colors: a browser-style history. → at the tip mints a new one;
-// ← steps back through what you've already seen.
+// ← steps back through what you've already seen. Typing a hex pushes it at
+// the tip, same as discovering it.
 let history: string[] = [];
 let histPos = -1;
 
@@ -83,14 +89,20 @@ function currentDiscover(): string | null {
   return histPos >= 0 && histPos < history.length ? history[histPos] : null;
 }
 
+function pushDiscover(hex: string): void {
+  history.splice(histPos + 1);
+  history.push(hex);
+  histPos = history.length - 1;
+  renderDiscover();
+}
+
 function discoverNext(): void {
   if (histPos < history.length - 1) {
     histPos++;
+    renderDiscover();
   } else {
-    history.push(randomColor());
-    histPos = history.length - 1;
+    pushDiscover(randomColor());
   }
-  renderDiscover();
 }
 
 function discoverPrev(): void {
@@ -127,13 +139,33 @@ function confirmDiscard(): boolean {
 function setTab(t: Tab): void {
   tab = t;
   panelDiscover.hidden = t !== "discover";
+  pickerPanel.el.hidden = t !== "picker";
   panelSaved.hidden = t !== "saved";
+  shadesPanel.el.hidden = t !== "shades";
+  wheelPanel.el.hidden = t !== "wheel";
   panelEdit.hidden = t !== "edit";
-  for (const b of railEl.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
+  for (const b of auxEl.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
     b.dataset.active = b.dataset.tab === t ? "true" : "false";
   }
   if (t === "discover" && history.length === 0) discoverNext();
   if (t === "saved") renderSaved();
+  if (t === "shades") shadesPanel.refresh();
+  if (t === "wheel") wheelPanel.refresh();
+}
+
+// ---- Saved pool -------------------------------------------------------
+
+/** Bookmark a color (newest first). Every tab's Save lands here. */
+function saveColor(hex: string): void {
+  const norm = normalizeHexForInput(hex);
+  if (!norm || saved.includes(norm)) return;
+  saved.unshift(norm);
+  persistSaved();
+  renderSaved();
+  // Generator tabs lead with the saved strip — keep them current so the
+  // save is visible immediately.
+  shadesPanel.refresh();
+  wheelPanel.refresh();
 }
 
 // ---- Discover panel ---------------------------------------------------
@@ -142,15 +174,19 @@ function renderDiscover(): void {
   const c = currentDiscover();
   if (!c) return;
   discoverChip.style.background = c;
-  discoverHexEl.textContent = c;
+  if (document.activeElement !== discoverHexInput) discoverHexInput.value = c;
+}
+
+function commitDiscoverHex(): void {
+  const norm = normalizeHexForInput(discoverHexInput.value);
+  if (norm && norm !== currentDiscover()) pushDiscover(norm);
+  else renderDiscover();
+  discoverHexInput.blur();
 }
 
 function saveCurrentColor(): void {
   const c = currentDiscover();
-  if (!c || saved.includes(c)) return;
-  saved.unshift(c);
-  persistSaved();
-  renderSaved();
+  if (c) saveColor(c);
 }
 
 // ---- Saved panel ------------------------------------------------------
@@ -160,7 +196,7 @@ function renderSaved(): void {
   if (saved.length === 0) {
     const hint = document.createElement("p");
     hint.className = "panel-hint";
-    hint.textContent = "No saved colors yet. Discover one and press Save.";
+    hint.textContent = "No saved colors yet. Discover or pick one and press Save.";
     savedGridEl.appendChild(hint);
     return;
   }
@@ -185,6 +221,8 @@ function renderSaved(): void {
       saved = saved.filter((x) => x !== c);
       persistSaved();
       renderSaved();
+      shadesPanel.refresh();
+      wheelPanel.refresh();
     });
     cell.append(sw, label, del);
     savedGridEl.appendChild(cell);
@@ -298,20 +336,30 @@ function renderStrip(): void {
   }
 }
 
+/** No in-window filename: the app layout has no titlebar, and the topbar
+ *  stays clean. The document name lives in the window-manager title only;
+ *  dirty state rides body[data-dirty] (the Edit tab shows the bullet). */
 function updateTitle(): void {
   const name = doc.theme.name || "untitled";
-  titleLabelEl.textContent = name;
   document.body.dataset.dirty = String(isDirty());
   const label = `${isDirty() ? "• " : ""}${name} — Color Editor`;
   document.title = label;
-  getCurrentWindow().setTitle(label).catch(() => {});
+  try {
+    getCurrentWindow().setTitle(label).catch(() => {});
+  } catch {
+    /* not running under tauri (vite dev in a browser) */
+  }
 }
 
 // ---- Persisted app state ----------------------------------------------
 
 function persistSaved(): void {
   persisted.saved = saved;
-  void invoke("save_state", { state: persisted }).catch(() => {});
+  try {
+    void invoke("save_state", { state: persisted }).catch(() => {});
+  } catch {
+    /* not running under tauri (vite dev in a browser) */
+  }
 }
 
 // ---- File I/O ---------------------------------------------------------
@@ -375,7 +423,7 @@ function newDoc(): void {
   setTab("edit");
 }
 
-// ---- Keyboard ---------------------------------------------------------
+// ---- Keyboard (app-local; file shortcuts come from the action registry) --
 
 function installKeyboard(): void {
   window.addEventListener("keydown", (e) => {
@@ -383,10 +431,6 @@ function installKeyboard(): void {
     const typing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA");
     const mod = e.ctrlKey || e.metaKey;
 
-    if (mod && e.code === "KeyN") { e.preventDefault(); newDoc(); return; }
-    if (mod && e.code === "KeyO") { e.preventDefault(); void openViaDialog(); return; }
-    if (mod && e.code === "KeyS" && !e.shiftKey) { e.preventDefault(); void save(); return; }
-    if (mod && e.code === "KeyS" && e.shiftKey) { e.preventDefault(); void saveAs(); return; }
     if (mod && e.code === "Enter") { e.preventDefault(); addColorRow(); return; }
     if (mod || typing) return;
 
@@ -415,26 +459,36 @@ async function installFileDrop(): Promise<void> {
 function initChrome(): void {
   const chrome = mountChrome({
     productName: "Color Editor",
-    actions: {},
+    version: __APP_VERSION__,
+    layout: "app",
     showAuxPane: true,
-    showStatusLine: false,
+    actions: {
+      "new": () => newDoc(),
+      "open": () => void openViaDialog(),
+      "save": () => void save(),
+      "save-as": () => void saveAs(),
+    },
     updater: true,
   });
-  viewportEl = chrome.viewport;
-  railEl = chrome.aux!;
-  railEl.setAttribute("aria-label", "Tabs");
+  auxEl = chrome.aux!;
+  auxEl.setAttribute("aria-label", "Tabs");
 
-  // MAIN: topbar (window controls) + the per-tab panels.
-  const mainTopbar = buildMainTopbar();
-  const content = document.createElement("div");
-  content.className = "main-content";
-  content.append(buildDiscoverPanel(), buildSavedPanel(), buildEditPanel());
-  viewportEl.replaceChildren(mainTopbar, content);
+  pickerPanel = buildPickerPanel(saveColor);
+  shadesPanel = buildShadesPanel(() => saved, saveColor);
+  wheelPanel = buildWheelPanel(() => saved, saveColor);
 
-  // AUX: topbar (hamburger menu) + the tab switcher.
-  railEl.replaceChildren(buildAuxTopbar(), buildTabBar());
+  chrome.mainContent!.append(
+    buildDiscoverPanel(),
+    pickerPanel.el,
+    buildSavedPanel(),
+    shadesPanel.el,
+    wheelPanel.el,
+    buildEditPanel(),
+  );
 
-  document.body.dataset.aux = "visible";
+  // The aux pane already leads with the desktop-ui strip (hamburger menu);
+  // the tab switcher rides below it.
+  auxEl.appendChild(buildTabBar());
 }
 
 function buildDiscoverPanel(): HTMLElement {
@@ -444,8 +498,18 @@ function buildDiscoverPanel(): HTMLElement {
   discoverChip = document.createElement("div");
   discoverChip.className = "discover-chip";
 
-  discoverHexEl = document.createElement("div");
-  discoverHexEl.className = "discover-hex mono";
+  // The hex readout is editable: type a color to see it on the chip.
+  discoverHexInput = document.createElement("input");
+  discoverHexInput.type = "text";
+  discoverHexInput.spellcheck = false;
+  discoverHexInput.className = "discover-hex mono";
+  discoverHexInput.placeholder = "#rrggbb";
+  discoverHexInput.setAttribute("aria-label", "Hex color");
+  discoverHexInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commitDiscoverHex(); }
+    if (e.key === "Escape") { e.preventDefault(); renderDiscover(); discoverHexInput.blur(); }
+  });
+  discoverHexInput.addEventListener("blur", () => commitDiscoverHex());
 
   const actions = document.createElement("div");
   actions.className = "discover-actions";
@@ -461,9 +525,9 @@ function buildDiscoverPanel(): HTMLElement {
 
   const hint = document.createElement("p");
   hint.className = "panel-hint";
-  hint.textContent = "Space or → for a new color · ← to step back · S to save";
+  hint.textContent = "Space or → for a new color · ← to step back · S to save · or type a hex";
 
-  panelDiscover.append(discoverChip, discoverHexEl, actions, hint);
+  panelDiscover.append(discoverChip, discoverHexInput, actions, hint);
   return panelDiscover;
 }
 
@@ -520,7 +584,10 @@ function buildTabBar(): HTMLElement {
   bar.className = "tab-bar";
   const tabs: Array<{ id: Tab; label: string; icon: string }> = [
     { id: "discover", label: "Discover", icon: "sparkles" },
+    { id: "picker", label: "Picker", icon: "pipette" },
     { id: "saved", label: "Saved", icon: "bookmark" },
+    { id: "shades", label: "Shades", icon: "layers" },
+    { id: "wheel", label: "Wheel", icon: "wheel" },
     { id: "edit", label: "Edit", icon: "pencil" },
   ];
   for (const t of tabs) {
@@ -538,168 +605,17 @@ function buildTabBar(): HTMLElement {
   return bar;
 }
 
-// ---- Shell topbars + hamburger (mirrors paint/audio shell layout) -----
-
-function buildMainTopbar(): HTMLElement {
-  const bar = document.createElement("div");
-  bar.className = "main-topbar";
-  bar.setAttribute("data-tauri-drag-region", "true");
-
-  titleLabelEl = document.createElement("div");
-  titleLabelEl.className = "main-title";
-  titleLabelEl.setAttribute("data-tauri-drag-region", "true");
-  bar.appendChild(titleLabelEl);
-
-  const controls = document.createElement("div");
-  controls.className = "main-topbar-controls";
-  const min = topbarBtn("Minimize", "minus", () => void getCurrentWindow().minimize());
-  const max = topbarBtn("Maximize", "square", () => void getCurrentWindow().toggleMaximize());
-  const close = topbarBtn("Close", "x", () => void getCurrentWindow().close());
-  close.setAttribute("data-kind", "close");
-  controls.append(min, max, close);
-  bar.appendChild(controls);
-  return bar;
-}
-
-function topbarBtn(title: string, icon: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.className = "main-topbar-btn";
-  b.type = "button";
-  b.title = title;
-  b.append(svgIcon(icon, title === "Maximize" ? 12 : 14));
-  b.addEventListener("click", onClick);
-  return b;
-}
-
-function buildAuxTopbar(): HTMLElement {
-  const bar = document.createElement("div");
-  bar.className = "aux-topbar";
-  bar.setAttribute("data-tauri-drag-region", "true");
-  const hamburger = document.createElement("button");
-  hamburger.className = "main-topbar-btn";
-  hamburger.type = "button";
-  hamburger.title = "Menu";
-  hamburger.append(svgIcon("menu", 16));
-  hamburger.addEventListener("click", (e) => {
-    e.stopPropagation();
-    toggleHamburgerMenu(bar);
-  });
-  bar.appendChild(hamburger);
-  return bar;
-}
-
-type MenuItem =
-  | { label: string; shortcut?: string; action: () => void; enabled?: () => boolean }
-  | { sep: true };
-
-function toggleHamburgerMenu(anchor: HTMLElement): void {
-  const existing = document.querySelector(".menu-popover");
-  if (existing) {
-    existing.remove();
-    return;
-  }
-  const pop = document.createElement("div");
-  pop.className = "menu-popover";
-  const items: MenuItem[] = [
-    { label: "New", shortcut: "Ctrl+N", action: () => newDoc() },
-    { label: "Open…", shortcut: "Ctrl+O", action: () => void openViaDialog() },
-    { sep: true },
-    { label: "Save", shortcut: "Ctrl+S", action: () => void save() },
-    { label: "Save as…", shortcut: "Ctrl+Shift+S", action: () => void saveAs() },
-    { sep: true },
-    { label: "Check for updates…", action: () => void checkForUpdates("Color Editor") },
-    { label: "Quit", shortcut: "Ctrl+Q", action: () => void getCurrentWindow().close() },
-  ];
-  for (const it of items) {
-    if ("sep" in it) {
-      const s = document.createElement("div");
-      s.className = "menu-popover-sep";
-      pop.appendChild(s);
-      continue;
-    }
-    const btn = document.createElement("button");
-    btn.className = "menu-popover-item";
-    btn.type = "button";
-    const label = document.createElement("span");
-    label.textContent = it.label;
-    btn.appendChild(label);
-    if (it.shortcut) {
-      const k = document.createElement("span");
-      k.className = "menu-popover-shortcut";
-      k.textContent = it.shortcut;
-      btn.appendChild(k);
-    }
-    btn.addEventListener("click", () => {
-      pop.remove();
-      it.action();
-    });
-    pop.appendChild(btn);
-  }
-  anchor.parentElement?.appendChild(pop);
-  setTimeout(() => {
-    const handler = (ev: MouseEvent) => {
-      if (!pop.contains(ev.target as Node)) {
-        pop.remove();
-        document.removeEventListener("click", handler);
-      }
-    };
-    document.addEventListener("click", handler);
-  }, 0);
-}
-
-// ---- Inline SVG icons -------------------------------------------------
-
-function svgIcon(kind: string, size = 16): SVGSVGElement {
-  const ns = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(ns, "svg");
-  const isWinSquare = kind === "square" && size <= 12;
-  const small = kind === "minus" || kind === "x" || kind === "menu" || isWinSquare;
-  svg.setAttribute("viewBox", small ? "0 0 12 12" : "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", small ? "1.2" : "1.8");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  svg.setAttribute("width", String(size));
-  svg.setAttribute("height", String(size));
-  svg.setAttribute("aria-hidden", "true");
-  const paths: Record<string, string[]> = {
-    minus: ["M2 6h8"],
-    x: ["M3 3l6 6", "M9 3l-6 6"],
-    menu: ["M2 3h8", "M2 6h8", "M2 9h8"],
-    square: isWinSquare ? ["M2.5 2.5h7v7H2.5z"] : ["M5 5h14v14H5z"],
-    "chevron-left": ["M15 18l-6-6 6-6"],
-    "chevron-right": ["M9 18l6-6-6-6"],
-    plus: ["M12 5v14", "M5 12h14"],
-    bookmark: ["M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"],
-    sparkles: ["M12 3l1.7 4.8L18.5 9.5l-4.8 1.7L12 16l-1.7-4.8L5.5 9.5l4.8-1.7z", "M19 14l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7z"],
-    pencil: ["M12 20h9", "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"],
-  };
-  for (const d of paths[kind] ?? []) {
-    const p = document.createElementNS(ns, "path");
-    p.setAttribute("d", d);
-    svg.append(p);
-  }
-  return svg;
-}
-
-function pillBtn(icon: string, title: string, onClick: () => void): HTMLButtonElement {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.className = "pill-btn";
-  b.title = title;
-  b.append(svgIcon(icon, 16));
-  b.addEventListener("click", onClick);
-  return b;
-}
-
 // ---- Boot -------------------------------------------------------------
 
 async function boot(): Promise<void> {
   initChrome();
   subscribe(renderOutputs);
   installKeyboard();
-  await installFileDrop();
+  try {
+    await installFileDrop();
+  } catch {
+    /* webview drop events unavailable — open via dialog still works */
+  }
 
   try {
     const st = await invoke<AppState | null>("load_state");
