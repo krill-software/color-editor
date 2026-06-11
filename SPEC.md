@@ -65,10 +65,10 @@ title only; the dirty bullet rides the Edit tab's label.
   type any hex to see it on the chip and join the history. `S` / bookmark
   pill saves to the pool; `+` seeds it into the theme.
 - **Picker** — a saturation/value plane plus hue slider (conventional HSV
-  picker geometry) with a synced hex field, and a screen eyedropper: the
-  pipette asks the XDG desktop portal (`Screenshot.PickColor`) to let you
-  pick any pixel on screen — the compositor runs the crosshair UI, so it
-  works on Wayland and X11 alike. Save bookmarks the color.
+  picker geometry) with a synced hex field. Save bookmarks the color.
+  (A screen eyedropper via the XDG portal was tried and shelved — the
+  portal pick didn't work reliably here; revisit post-alpha. The code is
+  in git history.)
 - **Saved** — the pool. Click a swatch to add it to the theme; hover-✕
   removes it.
 - **Shades** — pick a saved color; it renders mid-ramp with lighter tints

@@ -5,8 +5,6 @@
 // bottom, pure hue top-right). Conversions are local — oklch.ts carries the
 // app's perceptual math, but a picker plane is defined in HSV by convention.
 
-import { invoke } from "@tauri-apps/api/core";
-
 import { pillBtn } from "./ui";
 
 export interface PickerPanel {
@@ -75,27 +73,11 @@ export function buildPickerPanel(onSave: (hex: string) => void): PickerPanel {
   hex.placeholder = "#rrggbb";
   const saveBtn = pillBtn("bookmark", "Save to saved colors (S)", () => save());
   saveBtn.classList.add("pill-accent");
-  // Screen eyedropper — the XDG portal runs the crosshair UI; we get a hex
-  // back. Quietly absent when no portal answers (e.g. vite dev in a browser).
-  const dropBtn = pillBtn("pipette", "Pick a color from the screen", () => {
-    void (async () => {
-      try {
-        const picked = await invoke<string>("pick_screen_color");
-        const parsed = hexToHsv(picked);
-        if (parsed) {
-          hsv = parsed;
-          render();
-        }
-      } catch {
-        /* portal unavailable or pick cancelled — leave the picker as-is */
-      }
-    })();
-  });
-  row.append(chip, hex, dropBtn, saveBtn);
+  row.append(chip, hex, saveBtn);
 
   const hint = document.createElement("p");
   hint.className = "panel-hint";
-  hint.textContent = "Drag the plane · slider for hue · pipette to pick from the screen · S to save";
+  hint.textContent = "Drag the plane for saturation and brightness · slider for hue · S to save";
 
   el.append(plane, hue, row, hint);
 
