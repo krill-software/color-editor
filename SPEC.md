@@ -1,163 +1,141 @@
-# Color Scheme Editor — Spec (v1)
+# Color Editor — Spec (v2)
 
-A minimal palette generator for Linux. Pick one color, get a perceptually-balanced wheel of named colors around it. Save and load palettes as JSON. Copy individual values out by hand (hex, rgb, css vars).
+A minimal CSS color-theme editor for Linux. Build a set of named colors —
+`--accent`, `--green`, whatever you call them — see each rendered live, tweak
+the values, and save the result as a plain `.css` file of custom properties.
+The output is just CSS variables, so it drops into any project (the krill
+theme included), but the app itself is **theme-agnostic** — it doesn't know
+or care what the variables are for. Think a stripped-down coolors.co whose
+artifact is a `colors.css`.
+
+> **v1 → v2 note.** v1 was an OKLCH categorical hue-wheel generator (pick one
+> color → a wheel of named hues). That design is shelved under `src/shelf/`
+> (see its README). v2 is this named-variable editor. `oklch.ts` survives as
+> the color-math home.
+
+## Identity
+
+| Field | Value |
+|---|---|
+| Slug (directory) | `color-editor` |
+| productName | `Color Editor` |
+| Binary | `krill-color-editor` |
+| Identifier | `software.krill.color-editor` |
+| Document format | CSS (`.css`, `text/css`) — a `:root { … }` of custom properties |
+| Icon glyph | Lucide `palette` (unchanged) |
 
 ## Goals
 
-- Generate a balanced color scheme from a single picked color, using **OKLCH** so lightness and chroma stay perceptually equal across slots — yellow stays bright, green doesn't go electric, no per-slot fudge factors.
-- Display the scheme as a circular wheel of slices, one per named hue, with the picked color highlighted.
-- Show the same scheme as three side-by-side textual blocks — hex list, rgb list, CSS variables. User selects + Ctrl+C; no copy buttons.
-- Save and load palettes as plain JSON.
-- Three slot counts — 3, 6, 12 — switchable. The smaller wheels are stable subsets of the 12-wheel: same names, same canonical hue degrees.
+- Edit a list of **named colors**: each is a CSS custom-property name + a value.
+- **Add color** appends a row: `name | hex | rendered swatch`. Edit any cell;
+  the swatch and the live CSS update as you type.
+- Names are the **designer's** call — `--accent`, `--green`, `--brand-500`.
+  No imposed taxonomy.
+- **The `.css` is the document.** Save writes `:root { --name: #hex; … }`;
+  Open parses a `.css`'s custom properties back into rows. Round-trips.
+- Visualize the whole theme at a glance (a swatch strip) while editing.
+- The output is consumable anywhere — paste it into desktop-ui's
+  `palette.css`, a web project, anything. The app stays generic.
 
-## Non-goals (v1)
+## Non-goals (v1/v2)
 
-- Per-slot manual editing — you pick *one* color, the wheel derives the rest. Per-slot edit is v2.
-- Tints / shades / tones expansion (5 lightness ramps per slot) — v2.
-- Contrast / accessibility checking — v2.
-- Color-blindness simulation — v2.
-- Export to design-tool formats (Figma tokens, Tailwind config, Sketch palette) — v2; CSS variables only in v1.
-- Image-color-extraction — v2.
-- No multi-window.
+- **Not a krill-palette tool.** It can *produce* the krill palette, but has no
+  built-in knowledge of `--fm-*` names, roles, or derivations.
+- No per-row HSL/OKLCH wheels, harmonious-color generation, or auto-derived
+  ramps (tints/shades). Shelved; possible later as an optional "suggest" button.
+- No alpha / `rgba()` editing in v1 — values are `#rgb` / `#rrggbb`. (Other
+  values survive a round-trip as raw text, but aren't swatch-editable yet.)
+- No contrast / accessibility linting (v2+).
+- No SCSS/LESS, Tailwind config, Figma tokens, or JSON token formats — CSS
+  custom properties only.
+- No multi-window; no settings panel; no telemetry.
 
 ## Stack
 
-- Tauri 2 + TypeScript + Vite, like every other krill app.
-- Chrome + palette via [`@krill-software/desktop-ui`](https://github.com/krill-software/desktop-ui) (git dep) — `mountChrome()` builds the titlebar, menu bar, and status line; the locked-palette CSS bundle covers the brand colors.
-- All color math runs in TypeScript. Rust is only file I/O + state.
-- OKLCH ↔ sRGB conversions hand-rolled (~80 lines, no dep) — the math is well-defined and small.
+- Tauri 2 + TypeScript + Vite, like every krill app.
+- Chrome + palette via [`@krill-software/desktop-ui`](https://github.com/krill-software/desktop-ui)
+  (git dep): standard `mountChrome()` — titlebar, **File menu** (New / Open /
+  Save / Save As wired via the canonical action registry), status line, aux pane.
+- Color math: `oklch.ts` (kept from v1) — used for hex validation / conversion.
+- Rust is file I/O + state only: `read_css` / `write_css` (plain text via
+  `krill-desktop-core::fs`), plus state + dev-fixture probe.
 
 ## The model
 
-A palette is N hex strings (N ∈ {3, 6, 12}) plus the **primary** that drove generation.
-
-Slots in 12-mode (canonical RGB-hue degrees → readable names):
-
-| idx | hue | name |
-|---|---|---|
-| 0 | 0° | red |
-| 1 | 30° | orange |
-| 2 | 60° | yellow |
-| 3 | 90° | lime |
-| 4 | 120° | green |
-| 5 | 150° | teal |
-| 6 | 180° | turquoise |
-| 7 | 210° | azure |
-| 8 | 240° | blue |
-| 9 | 270° | purple |
-| 10 | 300° | magenta |
-| 11 | 330° | pink |
-
-- **6-mode** = even slots {0, 2, 4, 6, 8, 10} → red, yellow, green, turquoise, blue, magenta. (RGB primaries + secondaries.)
-- **3-mode** = every 4th {0, 4, 8} → red, green, blue.
-
-Switching modes never re-derives the wheel — the same primary regenerates 3 / 6 / 12 slots from the same OKLCH (L, c). So toggling is non-destructive.
-
-## Generation algorithm
-
-Given the user's picked color **P**:
-
-1. Convert **P** to OKLCH → (Lₚ, cₚ, hₚ) — perceptual lightness, chroma, and hue.
-2. Each canonical slot's hue is precomputed once: `slotHueOklch[i]` = OKLCH-hue of `hsl(slotRgbHue[i]°, 100%, 50%)`.
-3. Find slot index s\* whose `slotHueOklch[s*]` is the shortest *angular* distance from hₚ.
-4. **Slot s\*** = exactly **P** (no round-trip drift).
-5. Every other slot i: `oklch(Lₚ, cₚ, slotHueOklch[i])` → convert back to sRGB → gamut-clamp → hex.
-
-Behavior properties:
-- The user's exact picked color is preserved in its named home.
-- All other slots inherit the same perceptual L + c, so they feel like a family.
-- Hues land on named-color regions because the targets are pinned to canonical names.
-
-For colors that fall outside the sRGB gamut after rotation (more chroma than sRGB can hit at that L/H), gamut-clamp by reducing chroma until in-gamut. This is standard.
-
-## Layout
-
-```
-+-----------------------------------+----------------+
-|                                   |  HEX           |
-|      ┌─────────────────┐          |  red    #...   |
-|      │  <color wheel>  │          |  orange #...   |
-|      │  (3/6/12 slices)│          |  yellow #...   |
-|      └─────────────────┘          |  ...           |
-|                                   |                |
-|  ┌─────────────────────────┐      |----------------|
-|  │ <picker — H/S/L sliders │      |  RGB           |
-|  │     + #hex input>       │      |  red    rgb(...|
-|  └─────────────────────────┘      |  ...           |
-|                                   |                |
-|  [3]  [6]  [12]   mode            |----------------|
-|                                   |  CSS           |
-|                                   |  :root {       |
-|                                   |    --red: ...  |
-|                                   |    ...         |
-|                                   |  }             |
-+-----------------------------------+----------------+
-| status: filename · dirty · mode (3/6/12)            |
-+------------------------------------------------------+
+```ts
+interface ColorRow { id: string; name: string; hex: string }  // name w/o leading --
+interface Theme    { name: string; rows: ColorRow[] }          // name = doc title only
 ```
 
-Wheel is non-interactive in v1 (display only). Picker drives everything.
+- `rows` is ordered (insertion order); order is preserved in the CSS output.
+- `name` on the Theme is the document's display name (titlebar), **not** part
+  of the CSS — the CSS is purely the `:root` block.
+- Duplicate / empty var-names are allowed while editing (you're mid-thought);
+  rows with an empty name are simply omitted from the CSS output.
 
-## Color picker
+## Layout (standard krill chrome)
 
-- HSL sliders (H 0–360, S 0–100, L 0–100) — tactile, no native picker quirks.
-- `#RRGGBB` or `#RGB` text input that round-trips with the sliders.
-- The picker is the *single* input; the wheel is a read-only output.
-
-## File format — `.palette.json`
-
-```json
-{
-  "version": 1,
-  "name": "untitled",
-  "mode": 12,
-  "primary": "#dd7596",
-  "slots": [
-    "#...", "#...", "#...", "#...", "#...", "#...",
-    "#...", "#...", "#...", "#...", "#...", "#..."
-  ]
-}
+```
++--------------------------------------------+------------------+
+| ⋮ titlebar:  name •            _  □  ✕      |                  |
++--------------------------------------------+   PALETTE        |
+|                                            |  ▢ ▢ ▢ ▢ ▢ …    |
+|   --accent     #dd7596   ▣   ✕            |                  |
+|   --green      #34d058   ▣   ✕            |------------------|
+|   --ink        #30343f   ▣   ✕            |   CSS            |
+|                                            |  :root {         |
+|            [ + Add color ]                 |    --accent: #…  |
+|                                            |    --green:  #…  |
+|                                            |  }               |
++--------------------------------------------+------------------+
+| vX.Y.Z                              3 colors                  |
++--------------------------------------------------------------+
 ```
 
-- `slots.length === mode` always.
-- `primary` is the source-of-truth on reopen — `slots` is regenerable from it but stored for portability (so a non-krill reader can use the file directly).
+- **Main (viewport):** the editable row list + **Add color** button. Each row:
+  `--`-prefixed **name** input · **hex** input (mono) · **swatch** (a native
+  color input — click to pick) · **delete**. Name and hex two-way-sync the swatch.
+- **Aux pane:** a live **palette strip** (every row as a swatch) above the live
+  **CSS** output (`<pre>`, selectable — select + Ctrl+C, no copy button, per the
+  suite convention).
+- **Status line:** left = app version `vX.Y.Z` (suite convention); right =
+  `N colors`. Dirty marker rides `body[data-dirty]` on the centered filename.
 
-## Output panels
+## File handling — the `.css` is the document
 
-Plain `<pre>` blocks with selectable text, each shows the same N slots in a different syntax:
-
-- **Hex** — `red    #ff6b6b` per line, names padded.
-- **RGB** — `red    rgb(255, 107, 107)`.
-- **CSS** — `:root { --red: #ff6b6b; --orange: #ffa45b; ... }`.
-
-Manual selection + Ctrl+C is the workflow. No copy buttons.
+- **New** (`Ctrl+N`): empty theme (the Add button is the whole UI).
+- **Open** (`Ctrl+O`): read a `.css`, parse every `--name: value;` (lenient
+  regex, inside or outside `:root`) into rows. Non-hex values load as raw text.
+- **Save / Save As** (`Ctrl+S` / `Ctrl+Shift+S`): write `:root {\n  --name: #hex;\n…}\n`.
+  Default filename `colors.css`. `Ctrl+S` re-writes the open path; else prompts.
+- **Dirty tracking:** hash of the theme vs. last-saved hash. Clears on save.
+- CLI arg + drag-drop open a `.css`.
 
 ## Keybindings (v1)
 
 | Action | Key |
 |---|---|
-| New | `Ctrl+N` |
-| Open | `Ctrl+O` |
+| New / Open | `Ctrl+N` / `Ctrl+O` |
 | Save / Save As | `Ctrl+S` / `Ctrl+Shift+S` |
-| Mode 3 / 6 / 12 | `Ctrl+3` / `Ctrl+6` / `Ctrl+0` |
+| Add color | `Ctrl+Enter` |
 | Quit | `Ctrl+Q` |
+
+(File shortcuts come from desktop-ui's action registry; Add color is app-local.)
 
 ## Linux integration
 
-- Binary: `krill-color-editor`.
-- Product: `Color Editor`.
-- AppImage primary, `.deb` secondary. Same release flow as image-editor.
-- `.desktop` MIME association on `application/x-krill-palette+json` (treats the file as JSON for any other editor; the custom MIME just lets us own double-click).
-- XDG state (`$XDG_STATE_HOME/krill-color-editor/`) for window geometry + recent files.
-
-## Out of scope / open questions
-
-- Whether the wheel is a true polar slice render (canvas/SVG) or a CSS conic-gradient with masks — decide at impl. Conic-gradient is enough for v1.
-- Gamut-clamp method (reduce chroma vs. clip RGB channels) — decide at impl; clamp-chroma is the perceptually correct one.
-- Whether to bundle a font — defer; system sans is fine.
+- Binary: `krill-color-editor`. State: `$XDG_STATE_HOME/krill-color-editor/`.
+- `.desktop` MIME: `text/css`. AppImage primary, `.deb` secondary.
 
 ## Milestones
 
-1. **M1 — Wheel + picker + generation:** Tauri shell. HSL picker drives a 12-slot wheel via the OKLCH algorithm. Hex/RGB/CSS panels render live. No file I/O yet.
-2. **M2 — File I/O + modes:** save / open `.palette.json`, mode switcher (3 / 6 / 12). Window state persistence.
-3. **M3 — Polish + packaging:** styling pass (use the krill palette for the editor itself), keybindings, AppImage + .deb build, GitHub release workflow + docs landing page.
+1. **M1 — Editor + round-trip.** *(this pass)* Row list (add / edit name+hex /
+   delete), native-swatch picking, live palette strip + CSS output, New / Open /
+   Save / Save As as `.css`, CLI + drag-drop, dirty tracking.
+2. **M2 — Comfort.** Reorder rows (drag), duplicate-name warning, contrast
+   readout (value-on-white / value-on-black), `#rgba` / alpha support.
+3. **M3 — Optional generate.** Resurrect the shelved OKLCH engine as a
+   "suggest a harmonious color" button that proposes a new row.
+
+> color-editor remains a proof-of-concept (on the no-release list) until the
+> design bar is signed off. Do not release until it graduates.

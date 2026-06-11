@@ -35,7 +35,7 @@
           "name": "file",
           "index": 1,
           "takesValue": true,
-          "description": "Path to a .palette.json file to open"
+          "description": "Path to a .css file to open"
         }
       ]
     },
@@ -56,14 +56,14 @@
       "icons/icon.png"
     ],
     "category": "GraphicsAndDesign",
-    "shortDescription": "Color scheme editor",
-    "longDescription": "Generate a balanced color palette from a single picked color using OKLCH. Save and load as JSON. Hex, RGB and CSS-variable output.",
+    "shortDescription": "Color theme editor",
+    "longDescription": "Edit a set of named CSS color variables, see them rendered live, and save the result as a colors.css file of custom properties.",
     "fileAssociations": [
       {
-        "ext": ["json"],
-        "name": "Krill Palette",
-        "description": "Krill colors palette",
-        "mimeType": "application/x-krill-palette+json",
+        "ext": ["css"],
+        "name": "CSS",
+        "description": "CSS stylesheet",
+        "mimeType": "text/css",
         "role": "Editor"
       }
     ],
