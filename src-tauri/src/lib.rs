@@ -58,6 +58,30 @@ fn dev_test_file() -> Option<String> {
     kdev::test_file(env!("CARGO_MANIFEST_DIR"), &["test.css"])
 }
 
+#[derive(Debug, Serialize)]
+struct ImageRead {
+    path: String,
+    bytes: Vec<u8>,
+}
+
+// The Image tab decodes pixels in the webview canvas; Rust is just a byte
+// courier for the chosen image file (the open dialog can't hand the webview a
+// readable blob directly).
+#[tauri::command]
+fn read_image(path: String) -> Result<ImageRead, String> {
+    let p = Path::new(&path);
+    let bytes = kfs::read_bytes(p)?;
+    Ok(ImageRead {
+        path: kfs::absolute_path(p),
+        bytes,
+    })
+}
+
+#[tauri::command]
+fn dev_test_image() -> Option<String> {
+    kdev::test_file(env!("CARGO_MANIFEST_DIR"), &["test-image.png"])
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -68,9 +92,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             read_css,
             write_css,
+            read_image,
             load_state,
             save_state,
             dev_test_file,
+            dev_test_image,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

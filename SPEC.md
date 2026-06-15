@@ -51,6 +51,7 @@ title only; the dirty bullet rides the Edit tab's label.
 | ☰              |                              ─  ▢  ✕        |
 |   Discover     |                                             |
 |   Picker       |        (active panel)                       |
+|   Image        |                                             |
 |   Saved        |                                             |
 |   Shades       |                                             |
 |   Wheel        |                                             |
@@ -69,6 +70,12 @@ title only; the dirty bullet rides the Edit tab's label.
   (A screen eyedropper via the XDG portal was tried and shelved — the
   portal pick didn't work reliably here; revisit post-alpha. The code is
   in git history.)
+- **Image** — load an image; its colors are quantized and **grouped by hue
+  family** (Red, Orange, Yellow, Green, Cyan, Blue, Purple, Pink, plus a
+  Neutrals bucket for blacks / whites / grays). Each family lists its
+  most-covering colors; click a swatch to save it to the pool. Rust is a byte
+  courier (`read_image`); decode + quantize + grouping happen in the webview
+  (`src/extract.ts`).
 - **Saved** — the pool. Click a swatch to add it to the theme; hover-✕
   removes it.
 - **Shades** — pick a saved color; it renders mid-ramp with lighter tints

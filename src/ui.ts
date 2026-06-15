@@ -40,6 +40,11 @@ export function svgIcon(kind: string, size = 16): SVGSVGElement {
       "M12 2v6.5", "M21.5 9l-6.2 2", "M17.9 19.5l-3.8-5.2",
       "M6.1 19.5l3.8-5.2", "M2.5 9l6.2 2",
     ],
+    image: [
+      "M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+      "M8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z",
+      "m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21",
+    ],
   };
   for (const d of paths[kind] ?? []) {
     const p = document.createElementNS(ns, "path");

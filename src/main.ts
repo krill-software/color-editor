@@ -9,6 +9,7 @@ import { getMatches } from "@tauri-apps/plugin-cli";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import { cssToPairs, themeToCss } from "./css";
+import { extractPalette, type Extraction } from "./extract";
 import { oklchToRgbClamped, rgbToHex } from "./oklch";
 import { buildPickerPanel, type PickerPanel } from "./picker";
 import { buildShadesPanel, type ShadesPanel } from "./shades";
@@ -39,15 +40,19 @@ interface AppState {
   saved?: string[];
 }
 
-type Tab = "discover" | "picker" | "saved" | "shades" | "wheel" | "edit";
+type Tab = "discover" | "picker" | "image" | "saved" | "shades" | "wheel" | "edit";
 
 // ---- DOM refs ---------------------------------------------------------
 
 let auxEl: HTMLElement;
 
 let panelDiscover: HTMLElement;
+let panelImage: HTMLElement;
 let panelSaved: HTMLElement;
 let panelEdit: HTMLElement;
+let imageThumb: HTMLImageElement;
+let imageHintEl: HTMLElement;
+let imageGroupsEl: HTMLElement;
 let pickerPanel: PickerPanel;
 let shadesPanel: ShadesPanel;
 let wheelPanel: WheelPanel;
@@ -140,6 +145,7 @@ function setTab(t: Tab): void {
   tab = t;
   panelDiscover.hidden = t !== "discover";
   pickerPanel.el.hidden = t !== "picker";
+  panelImage.hidden = t !== "image";
   panelSaved.hidden = t !== "saved";
   shadesPanel.el.hidden = t !== "shades";
   wheelPanel.el.hidden = t !== "wheel";
@@ -480,6 +486,7 @@ function initChrome(): void {
   chrome.mainContent!.append(
     buildDiscoverPanel(),
     pickerPanel.el,
+    buildImagePanel(),
     buildSavedPanel(),
     shadesPanel.el,
     wheelPanel.el,
@@ -544,6 +551,107 @@ function buildSavedPanel(): HTMLElement {
   return panelSaved;
 }
 
+// ---- Image panel: load an image → colors grouped by family ------------
+
+interface ImageRead {
+  path: string;
+  bytes: number[];
+}
+
+function buildImagePanel(): HTMLElement {
+  panelImage = document.createElement("section");
+  panelImage.className = "panel panel-image";
+  panelImage.hidden = true;
+
+  const head = document.createElement("div");
+  head.className = "image-head";
+  const loadBtn = document.createElement("button");
+  loadBtn.type = "button";
+  loadBtn.className = "image-load-btn";
+  loadBtn.append(svgIcon("image", 16));
+  const lbl = document.createElement("span");
+  lbl.textContent = "Load image…";
+  loadBtn.append(lbl);
+  loadBtn.addEventListener("click", () => void loadImageViaDialog());
+
+  imageThumb = document.createElement("img");
+  imageThumb.className = "image-thumb";
+  imageThumb.alt = "";
+  imageThumb.hidden = true;
+  head.append(loadBtn, imageThumb);
+
+  imageHintEl = document.createElement("p");
+  imageHintEl.className = "panel-hint";
+  imageHintEl.textContent =
+    "Load an image to pull its colors, grouped by family. Click a swatch to save it.";
+
+  imageGroupsEl = document.createElement("div");
+  imageGroupsEl.className = "image-groups";
+
+  panelImage.append(head, imageHintEl, imageGroupsEl);
+  return panelImage;
+}
+
+async function loadImageViaDialog(): Promise<void> {
+  const selected = await openDialog({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }],
+  });
+  if (typeof selected === "string") await loadImageFromPath(selected);
+}
+
+async function loadImageFromPath(path: string): Promise<void> {
+  let read: ImageRead;
+  try {
+    read = await invoke<ImageRead>("read_image", { path });
+  } catch (e) {
+    console.error("read_image failed:", e);
+    return;
+  }
+  try {
+    const ext = await extractPalette(new Uint8Array(read.bytes));
+    renderExtraction(ext);
+  } catch (e) {
+    console.error("extract failed:", e);
+  }
+}
+
+function renderExtraction(ext: Extraction): void {
+  imageThumb.src = ext.thumbnailUrl;
+  imageThumb.hidden = false;
+  imageHintEl.textContent = `${ext.width} × ${ext.height} · click a swatch to save it`;
+  imageGroupsEl.replaceChildren();
+  for (const group of ext.groups) {
+    const sec = document.createElement("div");
+    sec.className = "image-family";
+    const h = document.createElement("h3");
+    h.className = "image-family-h";
+    h.textContent = group.name;
+    const count = document.createElement("span");
+    count.className = "image-family-count";
+    count.textContent = String(group.colors.length);
+    h.appendChild(count);
+    const row = document.createElement("div");
+    row.className = "image-swatches";
+    for (const col of group.colors) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "image-swatch";
+      b.style.background = col.hex;
+      b.dataset.saved = String(saved.includes(col.hex));
+      b.title = `${col.hex} · ${(col.share * 100).toFixed(1)}% of the image`;
+      b.addEventListener("click", () => {
+        saveColor(col.hex);
+        b.dataset.saved = "true";
+      });
+      row.appendChild(b);
+    }
+    sec.append(h, row);
+    imageGroupsEl.appendChild(sec);
+  }
+}
+
 function buildEditPanel(): HTMLElement {
   panelEdit = document.createElement("section");
   panelEdit.className = "panel panel-edit";
@@ -585,6 +693,7 @@ function buildTabBar(): HTMLElement {
   const tabs: Array<{ id: Tab; label: string; icon: string }> = [
     { id: "discover", label: "Discover", icon: "sparkles" },
     { id: "picker", label: "Picker", icon: "pipette" },
+    { id: "image", label: "Image", icon: "image" },
     { id: "saved", label: "Saved", icon: "bookmark" },
     { id: "shades", label: "Shades", icon: "layers" },
     { id: "wheel", label: "Wheel", icon: "wheel" },
@@ -649,6 +758,15 @@ async function boot(): Promise<void> {
       if (dev) await openPath(dev);
     } catch {
       /* no fixture */
+    }
+    // Dev convenience: if a sample image is present, pre-extract it into the
+    // Image tab (without stealing focus from the default tab) so the grouped
+    // palette is there when you switch to it.
+    try {
+      const img = await invoke<string | null>("dev_test_image");
+      if (img) await loadImageFromPath(img);
+    } catch {
+      /* no image fixture */
     }
   }
 }
