@@ -1,7 +1,7 @@
 import "@krill-software/desktop-ui/styles";
 import "./styles.css";
 
-import { mountChrome, showBootError } from "@krill-software/desktop-ui";
+import { mountChrome, parseGpl, serializeGpl, showBootError } from "@krill-software/desktop-ui";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -542,13 +542,69 @@ function buildSavedPanel(): HTMLElement {
   panelSaved = document.createElement("section");
   panelSaved.className = "panel panel-saved";
   panelSaved.hidden = true;
+
+  const head = document.createElement("div");
+  head.className = "saved-head";
   const h = document.createElement("h2");
   h.className = "panel-title";
   h.textContent = "Saved colors";
+  const actions = document.createElement("div");
+  actions.className = "saved-actions";
+  const openBtn = document.createElement("button");
+  openBtn.type = "button";
+  openBtn.className = "saved-action-btn";
+  openBtn.textContent = "Open palette…";
+  openBtn.addEventListener("click", () => void openPalette());
+  const saveBtn = document.createElement("button");
+  saveBtn.type = "button";
+  saveBtn.className = "saved-action-btn";
+  saveBtn.textContent = "Save palette…";
+  saveBtn.addEventListener("click", () => void savePalette());
+  actions.append(openBtn, saveBtn);
+  head.append(h, actions);
+
   savedGridEl = document.createElement("div");
   savedGridEl.className = "saved-grid";
-  panelSaved.append(h, savedGridEl);
+  panelSaved.append(head, savedGridEl);
   return panelSaved;
+}
+
+// The saved pool is the portable palette: save it as a .gpl (GIMP Palette,
+// read by GIMP / Krita / Aseprite and by paint / pixel-editor), or open one
+// back into the pool. Rust read_css / write_css are plain-text couriers, so
+// they carry .gpl text too.
+async function savePalette(): Promise<void> {
+  if (saved.length === 0) return;
+  const chosen = await saveDialog({
+    title: "Save palette as…",
+    defaultPath: "palette.gpl",
+    filters: [{ name: "GIMP Palette", extensions: ["gpl"] }],
+  });
+  if (typeof chosen !== "string") return;
+  const text = serializeGpl({ name: "krill palette", colors: saved });
+  try {
+    await invoke<string>("write_css", { path: chosen, contents: text });
+  } catch (e) {
+    console.error("save palette failed:", e);
+  }
+}
+
+async function openPalette(): Promise<void> {
+  const selected = await openDialog({
+    multiple: false,
+    directory: false,
+    filters: [{ name: "GIMP Palette", extensions: ["gpl"] }],
+  });
+  if (typeof selected !== "string") return;
+  let read: CssRead;
+  try {
+    read = await invoke<CssRead>("read_css", { path: selected });
+  } catch (e) {
+    console.error("open palette failed:", e);
+    return;
+  }
+  for (const c of parseGpl(read.contents).colors) saveColor(c.hex);
+  setTab("saved");
 }
 
 // ---- Image panel: load an image → colors grouped by family ------------

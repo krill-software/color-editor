@@ -560,3 +560,27 @@ body[data-dirty="true"] .tab-btn[data-tab="edit"] span::after {
   color: var(--fm-bg);
   text-shadow: 0 1px 2px rgba(48, 52, 63, 0.55);
 }
+
+/* Saved palette actions ============================================= */
+
+.saved-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.saved-head .panel-title { margin: 0; }
+.saved-actions { display: flex; gap: 8px; }
+.saved-action-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--fm-rule-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fm-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 100ms ease, color 100ms ease;
+}
+.saved-action-btn:hover { border-color: var(--fm-accent); color: var(--fm-accent); }
