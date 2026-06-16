@@ -6,114 +6,112 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getMatches } from "@tauri-apps/plugin-cli";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
-import { cssToPairs, themeToCss } from "./css";
+import { paletteToCss } from "./css";
 import { extractPalette, type Extraction } from "./extract";
 import { oklchToRgbClamped, rgbToHex } from "./oklch";
 import { buildPickerPanel, type PickerPanel } from "./picker";
 import { buildShadesPanel, type ShadesPanel } from "./shades";
 import {
-  addRow,
+  addColor,
   doc,
   isDirty,
   markSaved,
-  newTheme,
-  removeRow,
-  setRowHex,
-  setRowName,
-  setTheme,
+  newPalette,
+  paletteFromColors,
+  removeColor,
+  setColorHex,
+  setColorName,
+  setPalette,
   subscribe,
-  themeFromPairs,
 } from "./state";
 import { pillBtn, svgIcon } from "./ui";
 import { buildWheelPanel, type WheelPanel } from "./wheel";
 
-interface CssRead {
+interface TextRead {
   path: string;
   contents: string;
 }
 
-interface AppState {
-  window?: { width: number; height: number; x: number; y: number };
-  recent?: string[];
-  saved?: string[];
+interface ImageRead {
+  path: string;
+  bytes: number[];
 }
 
-type Tab = "discover" | "picker" | "image" | "saved" | "shades" | "wheel" | "edit";
+interface AppState {
+  window?: unknown;
+  palette?: { name: string; colors: Array<{ name: string; hex: string }> };
+  path?: string;
+}
+
+type Tab = "palette" | "picker" | "wheel" | "shades" | "randomize" | "image";
 
 // ---- DOM refs ---------------------------------------------------------
 
 let auxEl: HTMLElement;
 
-let panelDiscover: HTMLElement;
+let panelPalette: HTMLElement;
+let panelRandomize: HTMLElement;
 let panelImage: HTMLElement;
-let panelSaved: HTMLElement;
-let panelEdit: HTMLElement;
-let imageThumb: HTMLImageElement;
-let imageHintEl: HTMLElement;
-let imageGroupsEl: HTMLElement;
 let pickerPanel: PickerPanel;
 let shadesPanel: ShadesPanel;
 let wheelPanel: WheelPanel;
 
-let discoverChip: HTMLElement;
-let discoverHexInput: HTMLInputElement;
-let savedGridEl: HTMLElement;
+let randomChip: HTMLElement;
+let randomHexInput: HTMLInputElement;
 let rowsEl: HTMLElement;
 let emptyHintEl: HTMLElement;
 let stripEl: HTMLElement;
 let cssOutEl: HTMLElement;
+let imageThumb: HTMLImageElement;
+let imageHintEl: HTMLElement;
+let imageGroupsEl: HTMLElement;
 
 // ---- App state --------------------------------------------------------
 
-let tab: Tab = "discover";
+let tab: Tab = "palette";
 let persisted: AppState = {};
 
-// Discovered colors: a browser-style history. → at the tip mints a new one;
-// ← steps back through what you've already seen. Typing a hex pushes it at
-// the tip, same as discovering it.
+// Randomize: a browser-style history. → at the tip mints a new color;
+// ← steps back through what you've seen. Typing a hex pushes it at the tip.
 let history: string[] = [];
 let histPos = -1;
 
-// Bookmarked colors — cross-document, persisted to app state.
-let saved: string[] = [];
-
 // ---- Color generation -------------------------------------------------
 
-/** A vivid-but-calm random color via OKLCH: random hue, lightness and chroma
- *  kept in pleasant mid ranges so nothing comes out muddy or neon. */
+/** A vivid-but-calm random color via OKLCH. */
 function randomColor(): string {
   const h = Math.random() * 360;
-  const L = 0.58 + Math.random() * 0.22; // 0.58–0.80
-  const c = 0.10 + Math.random() * 0.13; // 0.10–0.23
+  const L = 0.58 + Math.random() * 0.22;
+  const c = 0.10 + Math.random() * 0.13;
   return rgbToHex(oklchToRgbClamped({ L, c, h }));
 }
 
-function currentDiscover(): string | null {
+function currentRandom(): string | null {
   return histPos >= 0 && histPos < history.length ? history[histPos] : null;
 }
 
-function pushDiscover(hex: string): void {
+function pushRandom(hex: string): void {
   history.splice(histPos + 1);
   history.push(hex);
   histPos = history.length - 1;
-  renderDiscover();
+  renderRandom();
 }
 
-function discoverNext(): void {
+function randomNext(): void {
   if (histPos < history.length - 1) {
     histPos++;
-    renderDiscover();
+    renderRandom();
   } else {
-    pushDiscover(randomColor());
+    pushRandom(randomColor());
   }
 }
 
-function discoverPrev(): void {
+function randomPrev(): void {
   if (histPos > 0) {
     histPos--;
-    renderDiscover();
+    renderRandom();
   }
 }
 
@@ -135,124 +133,113 @@ function normalizeHexForInput(value: string): string | null {
   return null;
 }
 
-function confirmDiscard(): boolean {
-  return !isDirty() || window.confirm("Discard unsaved changes?");
+// window.confirm() is unreliable in WebKitGTK; use the Tauri dialog.
+async function confirmDiscard(): Promise<boolean> {
+  if (!isDirty()) return true;
+  try {
+    return await confirm("Discard unsaved changes?", { title: "Color Editor", kind: "warning" });
+  } catch {
+    return true; // not under tauri (vite dev) — don't block
+  }
+}
+
+// ---- The palette: add colors ------------------------------------------
+
+/** Every generator/deriver lands here. Dedupes by hex so the palette doesn't
+ *  fill with repeats; the manual "+ Add color" in the Palette tab is separate. */
+function addToPalette(hex: string): void {
+  const norm = normalizeHexForInput(hex);
+  if (!norm) return;
+  addColor("", norm, true);
+  renderRows();
+  shadesPanel.refresh();
+  wheelPanel.refresh();
 }
 
 // ---- Tabs -------------------------------------------------------------
 
 function setTab(t: Tab): void {
   tab = t;
-  panelDiscover.hidden = t !== "discover";
+  panelPalette.hidden = t !== "palette";
   pickerPanel.el.hidden = t !== "picker";
-  panelImage.hidden = t !== "image";
-  panelSaved.hidden = t !== "saved";
-  shadesPanel.el.hidden = t !== "shades";
   wheelPanel.el.hidden = t !== "wheel";
-  panelEdit.hidden = t !== "edit";
+  shadesPanel.el.hidden = t !== "shades";
+  panelRandomize.hidden = t !== "randomize";
+  panelImage.hidden = t !== "image";
   for (const b of auxEl.querySelectorAll<HTMLButtonElement>("[data-tab]")) {
     b.dataset.active = b.dataset.tab === t ? "true" : "false";
   }
-  if (t === "discover" && history.length === 0) discoverNext();
-  if (t === "saved") renderSaved();
+  if (t === "randomize" && history.length === 0) randomNext();
   if (t === "shades") shadesPanel.refresh();
   if (t === "wheel") wheelPanel.refresh();
 }
 
-// ---- Saved pool -------------------------------------------------------
+// ---- Randomize panel --------------------------------------------------
 
-/** Bookmark a color (newest first). Every tab's Save lands here. */
-function saveColor(hex: string): void {
-  const norm = normalizeHexForInput(hex);
-  if (!norm || saved.includes(norm)) return;
-  saved.unshift(norm);
-  persistSaved();
-  renderSaved();
-  // Generator tabs lead with the saved strip — keep them current so the
-  // save is visible immediately.
-  shadesPanel.refresh();
-  wheelPanel.refresh();
-}
-
-// ---- Discover panel ---------------------------------------------------
-
-function renderDiscover(): void {
-  const c = currentDiscover();
+function renderRandom(): void {
+  const c = currentRandom();
   if (!c) return;
-  discoverChip.style.background = c;
-  if (document.activeElement !== discoverHexInput) discoverHexInput.value = c;
+  randomChip.style.background = c;
+  if (document.activeElement !== randomHexInput) randomHexInput.value = c;
 }
 
-function commitDiscoverHex(): void {
-  const norm = normalizeHexForInput(discoverHexInput.value);
-  if (norm && norm !== currentDiscover()) pushDiscover(norm);
-  else renderDiscover();
-  discoverHexInput.blur();
+function commitRandomHex(): void {
+  const norm = normalizeHexForInput(randomHexInput.value);
+  if (norm && norm !== currentRandom()) pushRandom(norm);
+  else renderRandom();
+  randomHexInput.blur();
 }
 
-function saveCurrentColor(): void {
-  const c = currentDiscover();
-  if (c) saveColor(c);
+function addCurrentRandom(): void {
+  const c = currentRandom();
+  if (c) addToPalette(c);
 }
 
-// ---- Saved panel ------------------------------------------------------
+function buildRandomizePanel(): HTMLElement {
+  panelRandomize = document.createElement("section");
+  panelRandomize.className = "panel panel-discover";
+  panelRandomize.hidden = true;
 
-function renderSaved(): void {
-  savedGridEl.replaceChildren();
-  if (saved.length === 0) {
-    const hint = document.createElement("p");
-    hint.className = "panel-hint";
-    hint.textContent = "No saved colors yet. Discover or pick one and press Save.";
-    savedGridEl.appendChild(hint);
-    return;
-  }
-  for (const c of saved) {
-    const cell = document.createElement("div");
-    cell.className = "saved-cell";
-    const sw = document.createElement("button");
-    sw.type = "button";
-    sw.className = "saved-swatch";
-    sw.style.background = c;
-    sw.title = `Add ${c} to theme`;
-    sw.addEventListener("click", () => seedTheme(c));
-    const label = document.createElement("span");
-    label.className = "saved-hex mono";
-    label.textContent = c;
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "saved-del";
-    del.title = "Remove";
-    del.textContent = "✕";
-    del.addEventListener("click", () => {
-      saved = saved.filter((x) => x !== c);
-      persistSaved();
-      renderSaved();
-      shadesPanel.refresh();
-      wheelPanel.refresh();
-    });
-    cell.append(sw, label, del);
-    savedGridEl.appendChild(cell);
-  }
+  randomChip = document.createElement("div");
+  randomChip.className = "discover-chip";
+
+  randomHexInput = document.createElement("input");
+  randomHexInput.type = "text";
+  randomHexInput.spellcheck = false;
+  randomHexInput.className = "discover-hex mono";
+  randomHexInput.placeholder = "#rrggbb";
+  randomHexInput.setAttribute("aria-label", "Hex color");
+  randomHexInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commitRandomHex(); }
+    if (e.key === "Escape") { e.preventDefault(); renderRandom(); randomHexInput.blur(); }
+  });
+  randomHexInput.addEventListener("blur", () => commitRandomHex());
+
+  const actions = document.createElement("div");
+  actions.className = "discover-actions";
+  const back = pillBtn("chevron-left", "Back (←)", () => randomPrev());
+  const add = pillBtn("plus", "Add to palette (S)", () => addCurrentRandom());
+  add.classList.add("pill-accent");
+  const next = pillBtn("chevron-right", "Next (Space / →)", () => randomNext());
+  actions.append(back, add, next);
+
+  const hint = document.createElement("p");
+  hint.className = "panel-hint";
+  hint.textContent = "Space or → for a new color · ← to step back · S to add · or type a hex";
+
+  panelRandomize.append(randomChip, randomHexInput, actions, hint);
+  return panelRandomize;
 }
 
-/** Drop a color into the theme as a new row, and jump to Edit so it's seen. */
-function seedTheme(hex: string): void {
-  addRow("", hex);
-  renderRows();
-  setTab("edit");
-  const last = rowsEl.lastElementChild?.querySelector<HTMLInputElement>(".row-name-input");
-  last?.focus();
-}
-
-// ---- Edit panel: rows -------------------------------------------------
+// ---- Palette panel (the document) -------------------------------------
 
 function renderRows(): void {
   rowsEl.replaceChildren();
-  for (const row of doc.theme.rows) rowsEl.appendChild(buildRowEl(row));
-  emptyHintEl.hidden = doc.theme.rows.length > 0;
+  for (const c of doc.palette.colors) rowsEl.appendChild(buildColorRow(c));
+  emptyHintEl.hidden = doc.palette.colors.length > 0;
 }
 
-function buildRowEl(row: { id: string; name: string; hex: string }): HTMLElement {
+function buildColorRow(row: { id: string; name: string; hex: string }): HTMLElement {
   const el = document.createElement("div");
   el.className = "row";
 
@@ -267,7 +254,7 @@ function buildRowEl(row: { id: string; name: string; hex: string }): HTMLElement
   nameInput.className = "row-name-input mono";
   nameInput.placeholder = "name";
   nameInput.value = row.name;
-  nameInput.addEventListener("input", () => setRowName(row.id, nameInput.value));
+  nameInput.addEventListener("input", () => setColorName(row.id, nameInput.value));
   nameWrap.append(dashes, nameInput);
 
   const hexInput = document.createElement("input");
@@ -285,7 +272,7 @@ function buildRowEl(row: { id: string; name: string; hex: string }): HTMLElement
   if (!initial) swatch.dataset.unknown = "true";
 
   hexInput.addEventListener("input", () => {
-    setRowHex(row.id, hexInput.value);
+    setColorHex(row.id, hexInput.value);
     const norm = normalizeHexForInput(hexInput.value);
     if (norm) {
       swatch.value = norm;
@@ -297,17 +284,19 @@ function buildRowEl(row: { id: string; name: string; hex: string }): HTMLElement
   swatch.addEventListener("input", () => {
     hexInput.value = swatch.value;
     delete swatch.dataset.unknown;
-    setRowHex(row.id, swatch.value);
+    setColorHex(row.id, swatch.value);
   });
 
   const del = document.createElement("button");
   del.type = "button";
   del.className = "row-del";
-  del.title = "Delete";
+  del.title = "Remove";
   del.textContent = "✕";
   del.addEventListener("click", () => {
-    removeRow(row.id);
+    removeColor(row.id);
     renderRows();
+    shadesPanel.refresh();
+    wheelPanel.refresh();
   });
 
   el.append(nameWrap, hexInput, swatch, del);
@@ -315,121 +304,196 @@ function buildRowEl(row: { id: string; name: string; hex: string }): HTMLElement
 }
 
 function addColorRow(): void {
-  addRow("", currentDiscover() ?? "#dd7596");
+  addColor("", currentRandom() ?? "#dd7596");
   renderRows();
+  shadesPanel.refresh();
+  wheelPanel.refresh();
   const last = rowsEl.lastElementChild?.querySelector<HTMLInputElement>(".row-name-input");
   last?.focus();
 }
 
-// ---- Derived (CSS + strip + title) ------------------------------------
+function buildPalettePanel(): HTMLElement {
+  panelPalette = document.createElement("section");
+  panelPalette.className = "panel panel-edit";
+
+  stripEl = document.createElement("div");
+  stripEl.id = "strip";
+
+  const editor = document.createElement("div");
+  editor.id = "editor";
+  rowsEl = document.createElement("div");
+  rowsEl.id = "rows";
+  emptyHintEl = document.createElement("p");
+  emptyHintEl.id = "empty-hint";
+  emptyHintEl.textContent = "No colors yet. Add one, or pull colors from Discover / Tools.";
+  const addBtn = document.createElement("button");
+  addBtn.id = "add-btn";
+  addBtn.type = "button";
+  addBtn.textContent = "+ Add color";
+  addBtn.addEventListener("click", () => addColorRow());
+  editor.append(rowsEl, emptyHintEl, addBtn);
+
+  // CSS export — a collapsed preview + an explicit "Export to CSS…".
+  const details = document.createElement("details");
+  details.className = "css-details";
+  const summary = document.createElement("summary");
+  const summaryLabel = document.createElement("span");
+  summaryLabel.textContent = "CSS export";
+  const exportBtn = document.createElement("button");
+  exportBtn.type = "button";
+  exportBtn.className = "css-export-btn";
+  exportBtn.textContent = "Export to CSS…";
+  exportBtn.addEventListener("click", (e) => { e.preventDefault(); void exportCss(); });
+  summary.append(summaryLabel, exportBtn);
+  cssOutEl = document.createElement("pre");
+  cssOutEl.id = "out-css";
+  details.append(summary, cssOutEl);
+
+  panelPalette.append(stripEl, editor, details);
+  return panelPalette;
+}
+
+// ---- Derived (CSS preview + strip + title) ----------------------------
 
 function renderOutputs(): void {
-  cssOutEl.textContent = themeToCss(doc.theme);
+  cssOutEl.textContent = paletteToCss(doc.palette);
   renderStrip();
   updateTitle();
+  persist();
 }
 
 function renderStrip(): void {
   stripEl.replaceChildren();
-  for (const row of doc.theme.rows) {
+  for (const c of doc.palette.colors) {
     const sw = document.createElement("div");
     sw.className = "strip-swatch";
-    const norm = normalizeHexForInput(row.hex);
+    const norm = normalizeHexForInput(c.hex);
     if (norm) sw.style.background = norm;
     else sw.dataset.unknown = "true";
-    sw.title = `--${row.name || "?"}: ${row.hex}`;
+    sw.title = c.name ? `--${c.name}: ${c.hex}` : c.hex;
     stripEl.appendChild(sw);
   }
 }
 
-/** No in-window filename: the app layout has no titlebar, and the topbar
- *  stays clean. The document name lives in the window-manager title only;
- *  dirty state rides body[data-dirty] (the Edit tab shows the bullet). */
+/** The document name lives in the WM title; the dirty bullet rides the
+ *  Palette tab (body[data-dirty]). */
 function updateTitle(): void {
-  const name = doc.theme.name || "untitled";
+  const name = doc.palette.name || "untitled";
   document.body.dataset.dirty = String(isDirty());
   const label = `${isDirty() ? "• " : ""}${name} — Color Editor`;
   document.title = label;
   try {
     getCurrentWindow().setTitle(label).catch(() => {});
   } catch {
-    /* not running under tauri (vite dev in a browser) */
+    /* not under tauri */
   }
 }
 
-// ---- Persisted app state ----------------------------------------------
+// ---- Persisted app state (auto-restore the working palette) -----------
 
-function persistSaved(): void {
-  persisted.saved = saved;
-  try {
-    void invoke("save_state", { state: persisted }).catch(() => {});
-  } catch {
-    /* not running under tauri (vite dev in a browser) */
-  }
+let persistTimer: number | undefined;
+function persist(): void {
+  persisted.palette = {
+    name: doc.palette.name,
+    colors: doc.palette.colors.map((c) => ({ name: c.name, hex: c.hex })),
+  };
+  persisted.path = doc.path ?? undefined;
+  clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(() => {
+    try {
+      void invoke("save_state", { state: persisted }).catch(() => {});
+    } catch {
+      /* not under tauri */
+    }
+  }, 400);
 }
 
-// ---- File I/O ---------------------------------------------------------
+// ---- File I/O — the .gpl is the document ------------------------------
 
 async function openPath(path: string): Promise<void> {
-  if (!confirmDiscard()) return;
-  let read: CssRead;
+  if (!(await confirmDiscard())) return;
+  let read: TextRead;
   try {
-    read = await invoke<CssRead>("read_css", { path });
+    read = await invoke<TextRead>("read_css", { path }); // read_css = plain-text courier
   } catch (e) {
-    console.error("read_css failed:", e);
+    console.error("open failed:", e);
     return;
   }
-  const pairs = cssToPairs(read.contents);
-  setTheme(themeFromPairs(stripExt(basename(read.path)), pairs), read.path);
+  const parsed = parseGpl(read.contents);
+  const name = parsed.name || stripExt(basename(read.path));
+  setPalette(paletteFromColors(name, parsed.colors), read.path);
   renderRows();
-  setTab("edit");
+  shadesPanel.refresh();
+  wheelPanel.refresh();
+  setTab("palette");
 }
 
 async function openViaDialog(): Promise<void> {
   const selected = await openDialog({
     multiple: false,
     directory: false,
-    filters: [{ name: "CSS", extensions: ["css"] }],
+    filters: [{ name: "GIMP Palette", extensions: ["gpl"] }],
   });
   if (typeof selected === "string") await openPath(selected);
 }
 
 async function save(): Promise<void> {
-  if (doc.path) await writeCss(doc.path);
+  if (doc.path) await writeGpl(doc.path);
   else await saveAs();
 }
 
 async function saveAs(): Promise<void> {
-  const base = stripExt(doc.theme.name) || "colors";
+  const base = stripExt(doc.palette.name) || "palette";
   const chosen = await saveDialog({
-    title: "Save CSS as…",
+    title: "Save palette as…",
+    defaultPath: `${base}.gpl`,
+    filters: [{ name: "GIMP Palette", extensions: ["gpl"] }],
+  });
+  if (typeof chosen !== "string") return;
+  await writeGpl(chosen);
+}
+
+async function writeGpl(path: string): Promise<void> {
+  const text = serializeGpl({
+    name: doc.palette.name,
+    colors: doc.palette.colors.map((c) => ({ hex: c.hex, name: c.name || undefined })),
+  });
+  try {
+    const abs = await invoke<string>("write_css", { path, contents: text });
+    markSaved(abs, stripExt(basename(abs)));
+  } catch (e) {
+    console.error("save failed:", e);
+  }
+}
+
+async function newDoc(): Promise<void> {
+  if (!(await confirmDiscard())) return;
+  newPalette();
+  renderRows();
+  shadesPanel.refresh();
+  wheelPanel.refresh();
+  setTab("palette");
+}
+
+// ---- CSS export -------------------------------------------------------
+
+async function exportCss(): Promise<void> {
+  if (doc.palette.colors.length === 0) return;
+  const base = stripExt(doc.palette.name) || "colors";
+  const chosen = await saveDialog({
+    title: "Export to CSS…",
     defaultPath: `${base}.css`,
     filters: [{ name: "CSS", extensions: ["css"] }],
   });
   if (typeof chosen !== "string") return;
-  await writeCss(chosen);
-}
-
-async function writeCss(path: string): Promise<void> {
   try {
-    const abs = await invoke<string>("write_css", {
-      path,
-      contents: themeToCss(doc.theme),
-    });
-    markSaved(abs, stripExt(basename(abs)));
+    await invoke<string>("write_css", { path: chosen, contents: paletteToCss(doc.palette) });
   } catch (e) {
-    console.error("write_css failed:", e);
+    console.error("export CSS failed:", e);
   }
 }
 
-function newDoc(): void {
-  if (!confirmDiscard()) return;
-  newTheme();
-  renderRows();
-  setTab("edit");
-}
-
-// ---- Keyboard (app-local; file shortcuts come from the action registry) --
+// ---- Keyboard ---------------------------------------------------------
 
 function installKeyboard(): void {
   window.addEventListener("keydown", (e) => {
@@ -440,10 +504,10 @@ function installKeyboard(): void {
     if (mod && e.code === "Enter") { e.preventDefault(); addColorRow(); return; }
     if (mod || typing) return;
 
-    if (tab === "discover") {
-      if (e.code === "Space" || e.code === "ArrowRight") { e.preventDefault(); discoverNext(); return; }
-      if (e.code === "ArrowLeft") { e.preventDefault(); discoverPrev(); return; }
-      if (e.code === "KeyS") { e.preventDefault(); saveCurrentColor(); return; }
+    if (tab === "randomize") {
+      if (e.code === "Space" || e.code === "ArrowRight") { e.preventDefault(); randomNext(); return; }
+      if (e.code === "ArrowLeft") { e.preventDefault(); randomPrev(); return; }
+      if (e.code === "KeyS") { e.preventDefault(); addCurrentRandom(); return; }
     }
   });
 }
@@ -455,164 +519,12 @@ async function installFileDrop(): Promise<void> {
   await wv.onDragDropEvent(async (e) => {
     if (e.payload.type === "drop") {
       const path = e.payload.paths[0];
-      if (path) await openPath(path);
+      if (path && /\.gpl$/i.test(path)) await openPath(path);
     }
   });
 }
 
-// ---- Shell chrome -----------------------------------------------------
-
-function initChrome(): void {
-  const chrome = mountChrome({
-    productName: "Color Editor",
-    version: __APP_VERSION__,
-    layout: "app",
-    showAuxPane: true,
-    actions: {
-      "new": () => newDoc(),
-      "open": () => void openViaDialog(),
-      "save": () => void save(),
-      "save-as": () => void saveAs(),
-    },
-    updater: true,
-  });
-  auxEl = chrome.aux!;
-  auxEl.setAttribute("aria-label", "Tabs");
-
-  pickerPanel = buildPickerPanel(saveColor);
-  shadesPanel = buildShadesPanel(() => saved, saveColor);
-  wheelPanel = buildWheelPanel(() => saved, saveColor);
-
-  chrome.mainContent!.append(
-    buildDiscoverPanel(),
-    pickerPanel.el,
-    buildImagePanel(),
-    buildSavedPanel(),
-    shadesPanel.el,
-    wheelPanel.el,
-    buildEditPanel(),
-  );
-
-  // The aux pane already leads with the desktop-ui strip (hamburger menu);
-  // the tab switcher rides below it.
-  auxEl.appendChild(buildTabBar());
-}
-
-function buildDiscoverPanel(): HTMLElement {
-  panelDiscover = document.createElement("section");
-  panelDiscover.className = "panel panel-discover";
-
-  discoverChip = document.createElement("div");
-  discoverChip.className = "discover-chip";
-
-  // The hex readout is editable: type a color to see it on the chip.
-  discoverHexInput = document.createElement("input");
-  discoverHexInput.type = "text";
-  discoverHexInput.spellcheck = false;
-  discoverHexInput.className = "discover-hex mono";
-  discoverHexInput.placeholder = "#rrggbb";
-  discoverHexInput.setAttribute("aria-label", "Hex color");
-  discoverHexInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commitDiscoverHex(); }
-    if (e.key === "Escape") { e.preventDefault(); renderDiscover(); discoverHexInput.blur(); }
-  });
-  discoverHexInput.addEventListener("blur", () => commitDiscoverHex());
-
-  const actions = document.createElement("div");
-  actions.className = "discover-actions";
-  const back = pillBtn("chevron-left", "Back (←)", () => discoverPrev());
-  const saveBtn = pillBtn("bookmark", "Save (S)", () => saveCurrentColor());
-  saveBtn.classList.add("pill-accent");
-  const add = pillBtn("plus", "Add to theme", () => {
-    const c = currentDiscover();
-    if (c) seedTheme(c);
-  });
-  const next = pillBtn("chevron-right", "Next (Space / →)", () => discoverNext());
-  actions.append(back, saveBtn, add, next);
-
-  const hint = document.createElement("p");
-  hint.className = "panel-hint";
-  hint.textContent = "Space or → for a new color · ← to step back · S to save · or type a hex";
-
-  panelDiscover.append(discoverChip, discoverHexInput, actions, hint);
-  return panelDiscover;
-}
-
-function buildSavedPanel(): HTMLElement {
-  panelSaved = document.createElement("section");
-  panelSaved.className = "panel panel-saved";
-  panelSaved.hidden = true;
-
-  const head = document.createElement("div");
-  head.className = "saved-head";
-  const h = document.createElement("h2");
-  h.className = "panel-title";
-  h.textContent = "Saved colors";
-  const actions = document.createElement("div");
-  actions.className = "saved-actions";
-  const openBtn = document.createElement("button");
-  openBtn.type = "button";
-  openBtn.className = "saved-action-btn";
-  openBtn.textContent = "Open palette…";
-  openBtn.addEventListener("click", () => void openPalette());
-  const saveBtn = document.createElement("button");
-  saveBtn.type = "button";
-  saveBtn.className = "saved-action-btn";
-  saveBtn.textContent = "Save palette…";
-  saveBtn.addEventListener("click", () => void savePalette());
-  actions.append(openBtn, saveBtn);
-  head.append(h, actions);
-
-  savedGridEl = document.createElement("div");
-  savedGridEl.className = "saved-grid";
-  panelSaved.append(head, savedGridEl);
-  return panelSaved;
-}
-
-// The saved pool is the portable palette: save it as a .gpl (GIMP Palette,
-// read by GIMP / Krita / Aseprite and by paint / pixel-editor), or open one
-// back into the pool. Rust read_css / write_css are plain-text couriers, so
-// they carry .gpl text too.
-async function savePalette(): Promise<void> {
-  if (saved.length === 0) return;
-  const chosen = await saveDialog({
-    title: "Save palette as…",
-    defaultPath: "palette.gpl",
-    filters: [{ name: "GIMP Palette", extensions: ["gpl"] }],
-  });
-  if (typeof chosen !== "string") return;
-  const text = serializeGpl({ name: "krill palette", colors: saved });
-  try {
-    await invoke<string>("write_css", { path: chosen, contents: text });
-  } catch (e) {
-    console.error("save palette failed:", e);
-  }
-}
-
-async function openPalette(): Promise<void> {
-  const selected = await openDialog({
-    multiple: false,
-    directory: false,
-    filters: [{ name: "GIMP Palette", extensions: ["gpl"] }],
-  });
-  if (typeof selected !== "string") return;
-  let read: CssRead;
-  try {
-    read = await invoke<CssRead>("read_css", { path: selected });
-  } catch (e) {
-    console.error("open palette failed:", e);
-    return;
-  }
-  for (const c of parseGpl(read.contents).colors) saveColor(c.hex);
-  setTab("saved");
-}
-
-// ---- Image panel: load an image → colors grouped by family ------------
-
-interface ImageRead {
-  path: string;
-  bytes: number[];
-}
+// ---- Image panel (Tools ▸ Image) --------------------------------------
 
 function buildImagePanel(): HTMLElement {
   panelImage = document.createElement("section");
@@ -639,7 +551,7 @@ function buildImagePanel(): HTMLElement {
   imageHintEl = document.createElement("p");
   imageHintEl.className = "panel-hint";
   imageHintEl.textContent =
-    "Load an image to pull its colors, grouped by family. Click a swatch to save it.";
+    "Load an image to pull its colors, grouped by family. Click a swatch to add it to the palette.";
 
   imageGroupsEl = document.createElement("div");
   imageGroupsEl.className = "image-groups";
@@ -666,8 +578,7 @@ async function loadImageFromPath(path: string): Promise<void> {
     return;
   }
   try {
-    const ext = await extractPalette(new Uint8Array(read.bytes));
-    renderExtraction(ext);
+    renderExtraction(await extractPalette(new Uint8Array(read.bytes)));
   } catch (e) {
     console.error("extract failed:", e);
   }
@@ -676,7 +587,7 @@ async function loadImageFromPath(path: string): Promise<void> {
 function renderExtraction(ext: Extraction): void {
   imageThumb.src = ext.thumbnailUrl;
   imageThumb.hidden = false;
-  imageHintEl.textContent = `${ext.width} × ${ext.height} · click a swatch to save it`;
+  imageHintEl.textContent = `${ext.width} × ${ext.height} · click a swatch to add it`;
   imageGroupsEl.replaceChildren();
   for (const group of ext.groups) {
     const sec = document.createElement("div");
@@ -695,10 +606,9 @@ function renderExtraction(ext: Extraction): void {
       b.type = "button";
       b.className = "image-swatch";
       b.style.background = col.hex;
-      b.dataset.saved = String(saved.includes(col.hex));
       b.title = `${col.hex} · ${(col.share * 100).toFixed(1)}% of the image`;
       b.addEventListener("click", () => {
-        saveColor(col.hex);
+        addToPalette(col.hex);
         b.dataset.saved = "true";
       });
       row.appendChild(b);
@@ -708,54 +618,61 @@ function renderExtraction(ext: Extraction): void {
   }
 }
 
-function buildEditPanel(): HTMLElement {
-  panelEdit = document.createElement("section");
-  panelEdit.className = "panel panel-edit";
-  panelEdit.hidden = true;
+// ---- Shell chrome -----------------------------------------------------
 
-  stripEl = document.createElement("div");
-  stripEl.id = "strip";
+function initChrome(): void {
+  const chrome = mountChrome({
+    productName: "Color Editor",
+    version: __APP_VERSION__,
+    layout: "app",
+    showAuxPane: true,
+    actions: {
+      "new": () => void newDoc(),
+      "open": () => void openViaDialog(),
+      "save": () => void save(),
+      "save-as": () => void saveAs(),
+    },
+    customMenu: [
+      { group: "file", items: [{ label: "Export to CSS…", action: () => void exportCss() }] },
+    ],
+    updater: true,
+  });
+  auxEl = chrome.aux!;
+  auxEl.setAttribute("aria-label", "Tabs");
 
-  const editor = document.createElement("div");
-  editor.id = "editor";
-  rowsEl = document.createElement("div");
-  rowsEl.id = "rows";
-  emptyHintEl = document.createElement("p");
-  emptyHintEl.id = "empty-hint";
-  emptyHintEl.textContent = "No colors yet. Add one, or seed from Discover / Saved.";
-  const addBtn = document.createElement("button");
-  addBtn.id = "add-btn";
-  addBtn.type = "button";
-  addBtn.textContent = "+ Add color";
-  addBtn.addEventListener("click", () => addColorRow());
-  editor.append(rowsEl, emptyHintEl, addBtn);
+  pickerPanel = buildPickerPanel(addToPalette);
+  shadesPanel = buildShadesPanel(() => doc.palette.colors.map((c) => c.hex), addToPalette);
+  wheelPanel = buildWheelPanel(() => doc.palette.colors.map((c) => c.hex), addToPalette);
 
-  // CSS output — demoted to a collapsed disclosure for now.
-  const details = document.createElement("details");
-  details.className = "css-details";
-  const summary = document.createElement("summary");
-  summary.textContent = "CSS";
-  cssOutEl = document.createElement("pre");
-  cssOutEl.id = "out-css";
-  details.append(summary, cssOutEl);
+  chrome.mainContent!.append(
+    buildPalettePanel(),
+    pickerPanel.el,
+    wheelPanel.el,
+    shadesPanel.el,
+    buildRandomizePanel(),
+    buildImagePanel(),
+  );
 
-  panelEdit.append(stripEl, editor, details);
-  return panelEdit;
+  auxEl.appendChild(buildTabBar());
 }
+
+interface TabDef { id: Tab; label: string; icon: string }
 
 function buildTabBar(): HTMLElement {
   const bar = document.createElement("div");
   bar.className = "tab-bar";
-  const tabs: Array<{ id: Tab; label: string; icon: string }> = [
-    { id: "discover", label: "Discover", icon: "sparkles" },
+
+  // The Palette document sits on top, then grouped sources.
+  const top: TabDef[] = [{ id: "palette", label: "Palette", icon: "pencil" }];
+  const discover: TabDef[] = [
     { id: "picker", label: "Picker", icon: "pipette" },
-    { id: "image", label: "Image", icon: "image" },
-    { id: "saved", label: "Saved", icon: "bookmark" },
-    { id: "shades", label: "Shades", icon: "layers" },
     { id: "wheel", label: "Wheel", icon: "wheel" },
-    { id: "edit", label: "Edit", icon: "pencil" },
+    { id: "shades", label: "Shades", icon: "layers" },
+    { id: "randomize", label: "Randomize", icon: "sparkles" },
   ];
-  for (const t of tabs) {
+  const tools: TabDef[] = [{ id: "image", label: "Image", icon: "image" }];
+
+  const tabBtn = (t: TabDef) => {
     const b = document.createElement("button");
     b.type = "button";
     b.className = "tab-btn";
@@ -765,8 +682,20 @@ function buildTabBar(): HTMLElement {
     span.textContent = t.label;
     b.append(span);
     b.addEventListener("click", () => setTab(t.id));
-    bar.appendChild(b);
-  }
+    return b;
+  };
+  const groupLabel = (text: string) => {
+    const l = document.createElement("div");
+    l.className = "tab-group";
+    l.textContent = text;
+    return l;
+  };
+
+  for (const t of top) bar.appendChild(tabBtn(t));
+  bar.appendChild(groupLabel("Discover"));
+  for (const t of discover) bar.appendChild(tabBtn(t));
+  bar.appendChild(groupLabel("Tools"));
+  for (const t of tools) bar.appendChild(tabBtn(t));
   return bar;
 }
 
@@ -779,22 +708,19 @@ async function boot(): Promise<void> {
   try {
     await installFileDrop();
   } catch {
-    /* webview drop events unavailable — open via dialog still works */
+    /* drop events unavailable */
   }
 
   try {
     const st = await invoke<AppState | null>("load_state");
-    if (st) {
-      persisted = st;
-      if (Array.isArray(st.saved)) saved = st.saved;
-    }
+    if (st) persisted = st;
   } catch {
     /* first run */
   }
 
   renderRows();
   renderOutputs();
-  setTab("discover");
+  setTab("palette");
 
   let opened = false;
   try {
@@ -808,6 +734,15 @@ async function boot(): Promise<void> {
     /* cli plugin unavailable */
   }
 
+  // Restore the unsaved working palette (auto-restore) when nothing else opened.
+  if (!opened && persisted.palette && persisted.palette.colors.length > 0) {
+    setPalette(paletteFromColors(persisted.palette.name, persisted.palette.colors), persisted.path ?? null);
+    renderRows();
+    shadesPanel.refresh();
+    wheelPanel.refresh();
+    opened = true;
+  }
+
   if (!opened && import.meta.env.DEV) {
     try {
       const dev = await invoke<string | null>("dev_test_file");
@@ -815,9 +750,8 @@ async function boot(): Promise<void> {
     } catch {
       /* no fixture */
     }
-    // Dev convenience: if a sample image is present, pre-extract it into the
-    // Image tab (without stealing focus from the default tab) so the grouped
-    // palette is there when you switch to it.
+  }
+  if (import.meta.env.DEV) {
     try {
       const img = await invoke<string | null>("dev_test_image");
       if (img) await loadImageFromPath(img);

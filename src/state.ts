@@ -1,7 +1,8 @@
-import type { ColorRow, Theme } from "./types";
+import type { Palette, PaletteColor } from "./types";
 
 interface DocState {
-  theme: Theme;
+  palette: Palette;
+  /** The .gpl on disk, or null for an unsaved (untitled) palette. */
   path: string | null;
   savedHash: number;
 }
@@ -11,29 +12,31 @@ function nextId(): string {
   return `c${++idCounter}`;
 }
 
-export function emptyTheme(): Theme {
-  return { name: "untitled", rows: [] };
+export function emptyPalette(): Palette {
+  return { name: "untitled", colors: [] };
 }
 
-/** Build a Theme (with fresh row ids) from parsed name/value pairs. */
-export function themeFromPairs(
+/** Build a Palette (with fresh ids) from parsed name/hex pairs. */
+export function paletteFromColors(
   name: string,
-  pairs: Array<{ name: string; hex: string }>,
-): Theme {
-  return { name, rows: pairs.map((p) => ({ id: nextId(), name: p.name, hex: p.hex })) };
+  colors: Array<{ name?: string; hex: string }>,
+): Palette {
+  return {
+    name,
+    colors: colors.map((c) => ({ id: nextId(), name: c.name ?? "", hex: c.hex })),
+  };
 }
 
 export const doc: DocState = {
-  theme: emptyTheme(),
+  palette: emptyPalette(),
   path: null,
   savedHash: 0,
 };
-doc.savedHash = hashTheme(doc.theme);
+doc.savedHash = hashPalette(doc.palette);
 
 const listeners = new Set<() => void>();
 
-/** Subscribe to value changes (edits to names/hexes). Structural changes
- *  (add/remove/load) call the structural render directly — see main.ts. */
+/** Subscribe to any palette change (add/remove/edit/load). */
 export function subscribe(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -43,59 +46,66 @@ function notify() {
   for (const fn of listeners) fn();
 }
 
-export function addRow(name = "", hex = "#000000"): ColorRow {
-  const row: ColorRow = { id: nextId(), name, hex };
-  doc.theme.rows.push(row);
+/** Add a color. Generators dedupe by hex (pass `dedupe`); the manual
+ *  "+ Add color" in the Palette tab allows duplicates. Returns the color, or
+ *  the existing one when deduped. */
+export function addColor(name = "", hex = "#000000", dedupe = false): PaletteColor {
+  if (dedupe) {
+    const existing = doc.palette.colors.find((c) => c.hex.toLowerCase() === hex.toLowerCase());
+    if (existing) return existing;
+  }
+  const color: PaletteColor = { id: nextId(), name, hex };
+  doc.palette.colors.push(color);
   notify();
-  return row;
+  return color;
 }
 
-export function removeRow(id: string) {
-  doc.theme.rows = doc.theme.rows.filter((r) => r.id !== id);
-  notify();
-}
-
-export function setRowName(id: string, name: string) {
-  const r = doc.theme.rows.find((x) => x.id === id);
-  if (!r) return;
-  r.name = name;
-  notify();
-}
-
-export function setRowHex(id: string, hex: string) {
-  const r = doc.theme.rows.find((x) => x.id === id);
-  if (!r) return;
-  r.hex = hex;
+export function removeColor(id: string) {
+  doc.palette.colors = doc.palette.colors.filter((c) => c.id !== id);
   notify();
 }
 
-export function setTheme(theme: Theme, path: string | null) {
-  doc.theme = theme;
+export function setColorName(id: string, name: string) {
+  const c = doc.palette.colors.find((x) => x.id === id);
+  if (!c) return;
+  c.name = name;
+  notify();
+}
+
+export function setColorHex(id: string, hex: string) {
+  const c = doc.palette.colors.find((x) => x.id === id);
+  if (!c) return;
+  c.hex = hex;
+  notify();
+}
+
+export function setPalette(palette: Palette, path: string | null) {
+  doc.palette = palette;
   doc.path = path;
-  doc.savedHash = hashTheme(theme);
+  doc.savedHash = hashPalette(palette);
   notify();
 }
 
-export function newTheme() {
-  setTheme(emptyTheme(), null);
+export function newPalette() {
+  setPalette(emptyPalette(), null);
 }
 
 export function markSaved(path: string, name: string) {
   doc.path = path;
-  doc.theme.name = name;
-  doc.savedHash = hashTheme(doc.theme);
+  doc.palette.name = name;
+  doc.savedHash = hashPalette(doc.palette);
   notify();
 }
 
 export function isDirty(): boolean {
-  return hashTheme(doc.theme) !== doc.savedHash;
+  return hashPalette(doc.palette) !== doc.savedHash;
 }
 
-/** FNV-1a over the rows (names + values). The theme name is excluded so a
+/** FNV-1a over the colors (names + hexes). The palette name is excluded so a
  *  rename-on-save doesn't read back as a pending edit. */
-function hashTheme(t: Theme): number {
+function hashPalette(p: Palette): number {
   let h = 2166136261 >>> 0;
-  const s = JSON.stringify(t.rows.map((r) => [r.name, r.hex]));
+  const s = JSON.stringify(p.colors.map((c) => [c.name, c.hex]));
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 16777619);

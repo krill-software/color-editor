@@ -55,10 +55,22 @@ html, body {
 .tab-btn[data-active="true"] svg { color: var(--fm-accent); }
 
 /* The document lives in the Edit tab — its dirty bullet rides there. */
-body[data-dirty="true"] .tab-btn[data-tab="edit"] span::after {
+body[data-dirty="true"] .tab-btn[data-tab="palette"] span::after {
   content: "•";
   color: var(--fm-accent);
   margin-left: 6px;
+}
+
+/* Sidebar group labels (Discover / Tools). */
+.tab-group {
+  margin: 14px 0 4px;
+  padding: 0 10px;
+  font-family: var(--fm-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fm-muted);
 }
 
 /* Panels ============================================================ */
@@ -461,17 +473,36 @@ body[data-dirty="true"] .tab-btn[data-tab="edit"] span::after {
 #empty-hint { color: var(--fm-muted); font-size: 13px; margin: 8px 0 0; }
 #empty-hint[hidden] { display: none; }
 
-/* CSS output — demoted to a collapsed disclosure. */
+/* CSS export — a collapsed preview + an explicit Export button. */
 .css-details { margin-top: 24px; max-width: 560px; }
 .css-details summary {
   cursor: pointer;
-  font-size: 10.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--fm-muted);
   user-select: none;
 }
+.css-details summary::-webkit-details-marker { display: none; }
+.css-export-btn {
+  padding: 5px 11px;
+  border: 1px solid var(--fm-rule-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fm-text);
+  font: inherit;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: pointer;
+  transition: border-color 100ms ease, color 100ms ease;
+}
+.css-export-btn:hover { border-color: var(--fm-accent); color: var(--fm-accent); }
 #out-css {
   margin: 8px 0 0;
   font-family: var(--fm-mono);

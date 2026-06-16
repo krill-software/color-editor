@@ -1,16 +1,17 @@
-// A theme is an ordered list of named colors. Each row becomes one CSS
-// custom property: `--<name>: <hex>;`. The var name is the designer's call.
+// The document is a palette: an ordered list of colors, each with an OPTIONAL
+// name. Named colors export cleanly to CSS custom properties; unnamed ones are
+// just swatches you're keeping. `.gpl` carries names, so they round-trip.
 
-export interface ColorRow {
+export interface PaletteColor {
   id: string;
-  /** Variable name WITHOUT the leading `--`, e.g. "accent". */
+  /** Optional name (no leading `--`), e.g. "accent". Empty = unnamed. */
   name: string;
   /** The value, normally a hex color like "#dd7596". */
   hex: string;
 }
 
-export interface Theme {
-  /** Document display name (titlebar only) — not part of the CSS output. */
+export interface Palette {
+  /** Document display name (WM title + .gpl "Name:"). */
   name: string;
-  rows: ColorRow[];
+  colors: PaletteColor[];
 }

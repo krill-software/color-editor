@@ -38,9 +38,11 @@ fn write_css(path: String, contents: String) -> Result<String, String> {
 #[derive(Debug, Serialize, Deserialize, Default)]
 struct AppState {
     window: Option<kstate::WindowGeometry>,
-    recent: Option<Vec<String>>,
-    /// Bookmarked colors from the Discover tab — cross-document.
-    saved: Option<Vec<String>>,
+    /// The unsaved working palette, mirrored for auto-restore on next launch.
+    /// Opaque JSON ({ name, colors:[{name,hex}] }) — the webview owns its shape.
+    palette: Option<serde_json::Value>,
+    /// Path of the .gpl the palette was opened from / saved to, if any.
+    path: Option<String>,
 }
 
 #[tauri::command]
@@ -55,7 +57,7 @@ fn save_state(state: AppState) -> Result<(), String> {
 
 #[tauri::command]
 fn dev_test_file() -> Option<String> {
-    kdev::test_file(env!("CARGO_MANIFEST_DIR"), &["test.css"])
+    kdev::test_file(env!("CARGO_MANIFEST_DIR"), &["palette.gpl"])
 }
 
 #[derive(Debug, Serialize)]

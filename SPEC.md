@@ -1,15 +1,17 @@
-# Color Editor — Spec (v3)
+# Color Editor — Spec (v4)
 
-A calm color workbench for Linux. Browse for colors you like, pick them
-precisely, keep the keepers, derive shades and harmonies from them — and when
-a set is worth keeping together, name the colors and save the set as a plain
-`.css` file of custom properties. Think a stripped-down coolors.co whose
-artifact is a `colors.css`.
+A calm palette editor for Linux. Browse, pick, and extract colors; derive
+shades and harmonies; organize and name them; and save the set as a portable
+palette you can open anywhere. Think a stripped-down coolors.co whose document
+is a palette — not a stylesheet.
 
-> **History.** v1 was an OKLCH categorical hue-wheel generator (shelved under
-> `src/shelf/`; its generation engine returned in the Wheel tab). v2 was the
-> named-CSS-variable row editor (now the Edit tab). v3 wraps both in a tabbed
-> workbench centered on a persistent pool of **saved colors**.
+> **History.** v1 was an OKLCH hue-wheel generator (shelved under `src/shelf/`;
+> its engine powers the Wheel tab). v2 was a named-CSS-variable editor — the
+> `.css` was the document. v3 added Discover/Picker/Image/Shades/Wheel feeding a
+> separate **saved-colors pool**, leaving the app with two parallel color
+> collections (pool + theme) and two formats (`.gpl` + `.css`). **v4 unifies
+> them:** there is one palette, it is the document (`.gpl`), and CSS is an
+> export.
 
 ## Identity
 
@@ -19,104 +21,129 @@ artifact is a `colors.css`.
 | productName | `Color Editor` |
 | Binary | `krill-color-editor` |
 | Identifier | `software.krill.color-editor` |
-| Document format | CSS (`.css`, `text/css`) — a `:root { … }` of custom properties |
-| Icon glyph | Lucide `palette` (unchanged) |
+| Document format | **GIMP Palette (`.gpl`)** — the portable krill palette format |
+| Exports | CSS (`:root { --name: #hex }`); more later (hex list, JSON, `.ase`) |
+| Icon glyph | Lucide `palette` |
 
-## The model
-
-Two layers, deliberately separate:
-
-- **Saved colors** — a flat, ordered pool of hexes, persisted in app state
-  (`$XDG_STATE_HOME/krill-color-editor/`), independent of any document.
-  Bookmarks, not a document. Every tab's "save" lands here.
-- **The theme document** — the v2 model, unchanged: ordered named rows
-  (`--name: #hex`), round-tripping to a `.css` file. Lives in the Edit tab.
-  The `.css` is the document; saved colors feed it via "add to theme".
+## The model — one palette, it is the document
 
 ```ts
-interface ColorRow { id: string; name: string; hex: string }  // name w/o leading --
-interface Theme    { name: string; rows: ColorRow[] }          // name = doc title only
+interface PaletteColor { id: string; name: string; hex: string }  // name optional ("")
+interface Palette      { name: string; colors: PaletteColor[] }    // name = document name
 ```
+
+- **One collection.** The v3 "saved pool" and "theme rows" merge into a single
+  ordered `Palette`. Every generator/deriver adds to it; the Palette tab edits
+  it. There is no separate, hidden pool.
+- **Names are optional metadata.** A color can be unnamed (a swatch you're just
+  keeping) or named (`accent`, `brand-500`) for CSS export and organization.
+  `.gpl` carries names, so they round-trip through the document.
+- **The palette is the document.** `.gpl` is what New/Open/Save/Save As operate
+  on; the titlebar and dirty marker track it.
+
+## File handling — the `.gpl` is the document
+
+- **New** (`Ctrl+N`): empty untitled palette.
+- **Open** (`Ctrl+O`): parse a `.gpl` (shared `parseGpl` from desktop-ui) into
+  colors, names included. CLI arg + drag-drop open too.
+- **Save / Save As** (`Ctrl+S` / `Ctrl+Shift+S`): serialize to `.gpl`
+  (`serializeGpl`), default name `palette.gpl`.
+- **Dirty:** hash of the palette vs. last-saved.
+- **Auto-restore:** the unsaved working palette is mirrored to app state and
+  restored on launch, so collecting colors never loses work before you Save —
+  an untitled scratch that becomes a file when you save it.
+
+## Exports — projections of the palette
+
+- **Export to CSS…** — one-way write of `:root { --name: #hex; }`. Unnamed
+  colors are auto-named `--color-1`, `--color-2`, … on export (the Palette tab
+  nudges you to name the ones you care about first).
+- Future, all one-way: a flat hex list, JSON design tokens, Adobe `.ase`. The
+  palette stays the single source; each export is a projection.
 
 ## Layout — desktop-ui app layout
 
-`mountChrome({ layout: "app" })`: no titlebar, no status line. The aux pane
-(left) leads with the hamburger strip and carries the tab switcher; the main
-pane carries the window controls strip and the active panel. **No filename
-anywhere in the chrome** — the document name lives in the window-manager
-title only; the dirty bullet rides the Edit tab's label.
+`mountChrome({ layout: "app" })`: no titlebar / status line. The aux pane leads
+with the hamburger (menu) and the tab switcher; the main pane carries the
+window controls strip and the active panel. No filename in the chrome — the
+document name lives in the WM title; the dirty bullet rides the Palette tab.
+
+The aux pane is **grouped**: the Palette document sits on top, then a
+**Discover** group (ways to get a color) and a **Tools** group (pull a color
+from outside). Group labels are 11px uppercase mono, matching the suite.
 
 ```
 +----------------+---------------------------------------------+
 | ☰              |                              ─  ▢  ✕        |
-|   Discover     |                                             |
-|   Picker       |        (active panel)                       |
-|   Image        |                                             |
-|   Saved        |                                             |
-|   Shades       |                                             |
+|   Palette •    |                                             |
+|                |                                             |
+|   DISCOVER     |        (active panel)                       |
+|   Picker       |                                             |
 |   Wheel        |                                             |
-|   Edit •       |                                             |
+|   Shades       |                                             |
+|   Randomize    |                                             |
+|                |                                             |
+|   TOOLS        |                                             |
+|   Image        |                                             |
+|   Screen       |                                             |
 +----------------+---------------------------------------------+
 ```
 
 ## Tabs
 
-- **Discover** — full-bleed color chip; Space/→ mints a random OKLCH color
-  (browser-style history, ← steps back). The hex readout is an **input**:
-  type any hex to see it on the chip and join the history. `S` / bookmark
-  pill saves to the pool; `+` seeds it into the theme.
-- **Picker** — a saturation/value plane plus hue slider (conventional HSV
-  picker geometry) with a synced hex field. Save bookmarks the color.
-  (A screen eyedropper via the XDG portal was tried and shelved — the
-  portal pick didn't work reliably here; revisit post-alpha. The code is
-  in git history.)
-- **Image** — load an image; its colors are quantized and **grouped by hue
-  family** (Red, Orange, Yellow, Green, Cyan, Blue, Purple, Pink, plus a
-  Neutrals bucket for blacks / whites / grays). Each family lists its
-  most-covering colors; click a swatch to save it to the pool. Rust is a byte
-  courier (`read_image`); decode + quantize + grouping happen in the webview
-  (`src/extract.ts`).
-- **Saved** — the pool. Click a swatch to add it to the theme; hover-✕
-  removes it.
-- **Shades** — pick a saved color; it renders mid-ramp with lighter tints
-  above and darker shades below (OKLCH lightness steps, chroma tapering at
-  the extremes). Click any bar to save that shade.
-- **Wheel** — pick a saved color; twelve hues at its OKLCH lightness and
-  chroma render as a donut wheel (the v1 engine). The picked color holds its
-  own slot verbatim. Click a wedge or its swatch to save.
-- **Edit** — the v2 named-variable editor, unchanged: rows of
-  `--name | hex | swatch | ✕`, live palette strip, collapsed CSS disclosure,
-  New / Open / Save / Save As via the canonical action registry.
+The **Discover** and **Tools** entries all **Add to palette**; the **Palette**
+tab is the document.
 
-## File handling — the `.css` is the document
+- **Palette** *(the document — merges v3's Saved + Edit)* — the palette as an
+  editable, reorderable list: each row is `swatch · --name · hex · ✕`, above a
+  swatch strip of the whole set. `+ Add color`, drag to reorder, a collapsible
+  **CSS** preview, and **Export to CSS…**. This is what Save writes as `.gpl`.
 
-Unchanged from v2: Open parses custom properties (lenient), Save writes
-`:root { … }`, default name `colors.css`, dirty = hash vs last saved, CLI
-arg + drag-drop open. The saved-colors pool is **not** part of the document.
+**Discover** — ways to get a color:
+
+- **Picker** — saturation/value plane + hue slider + synced hex; Add to palette.
+- **Wheel** — pick a palette color → twelve hues at its OKLCH lightness/chroma
+  (the v1 engine). Click a wedge to add it.
+- **Shades** — pick a palette color → an OKLCH lightness ramp (lighter above,
+  darker below). Click a bar to add it.
+- **Randomize** *(v3's "Discover" tab, renamed)* — full-bleed chip; Space/→
+  mints a random OKLCH color (history, ← steps back); the hex readout is an
+  input. `S` / the bookmark pill adds the color to the palette.
+
+**Tools** — pull a color from outside:
+
+- **Image** — load an image; colors quantized and **grouped by hue family**
+  (Red…Pink + Neutrals). Click a swatch to add it to the palette.
+- **Screen** — pick a color from any pixel on screen, via the XDG desktop
+  portal (`Screenshot.PickColor`). *Note: this is the eyedropper shelved in v3
+  (git `21c4c4d`) because the portal pick returned nothing here — it needs the
+  portal interaction working (suspect: a missing parent-window handle) before
+  it's real. Tracked as its own task.*
 
 ## Keybindings
 
 | Action | Key |
 |---|---|
 | New / Open / Save / Save As | canonical (registry) |
-| Discover: next / back / save | `Space` or `→` / `←` / `S` |
-| Picker: save | `S` |
-| Add color row (Edit) | `Ctrl+Enter` |
+| Discover: next / back / add | `Space` or `→` / `←` / `S` |
+| Picker: add | `S` |
+| Add color row (Palette) | `Ctrl+Enter` |
 
-## Non-goals (v3)
+## Non-goals (v4)
 
 - No alpha / `rgba()` editing; values are `#rgb` / `#rrggbb`.
 - No contrast / accessibility linting yet.
-- No SCSS/LESS, Tailwind, Figma tokens, or JSON formats — CSS only.
+- The document is `.gpl` only; CSS/JSON/ASE are **exports**, not save targets.
 - No multi-window; no settings panel; no telemetry.
-- The app stays **theme-agnostic** — no built-in knowledge of `--fm-*` roles.
+- The app stays domain-agnostic — no built-in knowledge of krill `--fm-*` roles.
 
 ## Stack
 
-Tauri 2 + TypeScript + Vite + pnpm. Chrome and palette from
-[`@krill-software/desktop-ui`](https://github.com/krill-software/desktop-ui)
-(pinned tag); Rust side is `krill-desktop-core` one-liners (`read_css` /
-`write_css` / state / dev fixture). Color math in `src/oklch.ts`.
+Tauri 2 + TypeScript + Vite + pnpm. Chrome, palette tokens, and the shared
+`.gpl` parser from [`@krill-software/desktop-ui`](https://github.com/krill-software/desktop-ui)
+(`parseGpl` / `serializeGpl`). Rust is `krill-desktop-core` one-liners
+(`read_css`/`write_css` couriers reused for `.gpl` text, state, dev fixture,
+`read_image` for the Image tab). Color math in `src/oklch.ts`.
 
 ## Window
 
@@ -124,14 +151,15 @@ Canonical krill dimensions: 1296 × 800 default, 720 × 445 minimum, centered.
 
 ## Milestones
 
-1. **M3 — the workbench.** *(this pass)* Six tabs, saved pool feeding
-   Shades/Wheel, hex entry in Discover, desktop-ui app layout, no filename
-   in chrome. First alpha.
-2. **M4 — comfort.** Reorder saved colors and theme rows (drag), duplicate
-   warnings, contrast readout, copy-on-click affordances.
-3. **M5 — alpha polish.** Whatever the alpha teaches; candidate: shades
-   step-count control, wheel mode (3/6/12), `rgba` support.
+1. **M4 — unify.** *(this pass)* One `Palette` document model; `.gpl` as the
+   document (New/Open/Save/Save As + auto-restore); merge pool + theme into the
+   Palette tab; CSS demoted to **Export to CSS…**; titlebar/dirty track the
+   palette. Generators/derivers add to the palette.
+2. **M5 — comfort.** Drag-reorder, duplicate warnings, contrast readout,
+   copy-on-click, more export formats (hex/JSON).
+3. **M6 — polish.** Whatever use teaches; candidates: shades step count, wheel
+   mode (3/6/12), `rgba` support.
 
-> color-editor is a release candidate for its **first alpha**. Remove it from
-> the proof-of-concept skip-list in CLAUDE.md when the user confirms it has
-> graduated; until then, don't release.
+> color-editor shipped a first alpha (v0.3.0) on the document=`.css` model.
+> v4 is a model change; cut it as **v0.4.0**. Still graduated (not on the PoC
+> skip-list).
