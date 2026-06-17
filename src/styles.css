@@ -379,16 +379,29 @@ body[data-dirty="true"] .tab-btn[data-tab="palette"] span::after {
 
 .panel-edit { display: flex; flex-direction: column; }
 
-#strip { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 16px; }
-.strip-swatch { width: 26px; height: 26px; border-radius: 4px; border: 1px solid var(--fm-rule-strong); }
-.strip-swatch[data-unknown="true"] {
-  background: repeating-linear-gradient(
-    45deg, var(--fm-rule), var(--fm-rule) 4px, transparent 4px, transparent 8px);
-}
-
 #editor { display: flex; flex-direction: column; }
-/* Each color is a card: a rounded box of the color, the hex under it, a name. */
+/* Cards are grouped by hue family, each group under a label. */
 #rows {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.color-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.color-group-h {
+  margin: 0;
+  font-family: var(--fm-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fm-muted);
+}
+/* Each color is a card: a rounded box of the color, the hex under it, a name. */
+.color-group-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 16px;
@@ -400,10 +413,17 @@ body[data-dirty="true"] .tab-btn[data-tab="palette"] span::after {
   flex-direction: column;
   gap: 6px;
 }
-/* The box IS the color — a native color input styled as a rounded swatch. */
-.card-box {
+/* The box IS the color — a native color input styled as a rounded swatch. The
+ * wrapper drives the square (WebKitGTK ignores aspect-ratio on the input
+ * itself), and the input fills it. */
+.card-box-wrap {
   width: 100%;
   aspect-ratio: 1 / 1;
+}
+.card-box {
+  display: block;
+  width: 100%;
+  height: 100%;
   padding: 0;
   border: 1px solid var(--fm-rule-strong);
   border-radius: 10px;
@@ -480,51 +500,6 @@ body[data-dirty="true"] .tab-btn[data-tab="palette"] span::after {
 #add-btn:hover { border-color: var(--fm-accent); color: var(--fm-accent); }
 #empty-hint { color: var(--fm-muted); font-size: 13px; margin: 8px 0 0; }
 #empty-hint[hidden] { display: none; }
-
-/* CSS export — a collapsed preview + an explicit Export button. */
-.css-details { margin-top: 24px; max-width: 560px; }
-.css-details summary {
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--fm-muted);
-  user-select: none;
-}
-.css-details summary::-webkit-details-marker { display: none; }
-.css-export-btn {
-  padding: 5px 11px;
-  border: 1px solid var(--fm-rule-strong);
-  border-radius: 6px;
-  background: transparent;
-  color: var(--fm-text);
-  font: inherit;
-  font-size: 11px;
-  text-transform: none;
-  letter-spacing: 0;
-  cursor: pointer;
-  transition: border-color 100ms ease, color 100ms ease;
-}
-.css-export-btn:hover { border-color: var(--fm-accent); color: var(--fm-accent); }
-#out-css {
-  margin: 8px 0 0;
-  font-family: var(--fm-mono);
-  font-size: 12.5px;
-  line-height: 1.55;
-  background: var(--fm-bg);
-  color: var(--fm-text);
-  border: 1px solid var(--fm-rule);
-  border-radius: 6px;
-  padding: 10px 12px;
-  white-space: pre;
-  overflow: auto;
-  user-select: text;
-}
 
 /* Image (load → grouped palette) ==================================== */
 

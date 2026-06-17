@@ -16,8 +16,8 @@ import { getMatches } from "@tauri-apps/plugin-cli";
 import { confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import { paletteToCss } from "./css";
-import { extractPalette, type Extraction } from "./extract";
-import { oklchToRgbClamped, rgbToHex } from "./oklch";
+import { extractPalette, familyOf, FAMILY_ORDER, type Extraction } from "./extract";
+import { hexToRgb, oklchToRgbClamped, rgbToHex, rgbToOklch } from "./oklch";
 import { buildPickerPanel, type PickerPanel } from "./picker";
 import { buildShadesPanel, type ShadesPanel } from "./shades";
 import {
@@ -69,8 +69,6 @@ let randomChip: HTMLElement;
 let randomHexInput: HTMLInputElement;
 let rowsEl: HTMLElement;
 let emptyHintEl: HTMLElement;
-let stripEl: HTMLElement;
-let cssOutEl: HTMLElement;
 let imageDrop: DropZoneRefs;
 let imageThumb: HTMLImageElement;
 let imageHintEl: HTMLElement;
@@ -241,10 +239,53 @@ function buildRandomizePanel(): HTMLElement {
 
 // ---- Palette panel (the document) -------------------------------------
 
+// Cards are laid out in labelled hue-family groups (Red … Pink, Neutral, then
+// Other for unparseable hexes), each group's colors sorted dark → light. The
+// family buckets reuse the image-extractor's familyOf so the labels match that
+// feature. Display-only — the document order (and CSS / .gpl export order) is
+// left untouched.
 function renderRows(): void {
   rowsEl.replaceChildren();
-  for (const c of doc.palette.colors) rowsEl.appendChild(buildColorCard(c));
+
+  const byFamily = new Map<string, typeof doc.palette.colors>();
+  for (const c of doc.palette.colors) {
+    const fam = familyForHex(c.hex);
+    const arr = byFamily.get(fam) ?? [];
+    arr.push(c);
+    byFamily.set(fam, arr);
+  }
+
+  for (const fam of [...FAMILY_ORDER, "Other"]) {
+    const arr = byFamily.get(fam);
+    if (!arr || arr.length === 0) continue;
+    arr.sort((a, b) => lightnessOf(a.hex) - lightnessOf(b.hex)); // dark → light
+
+    const group = document.createElement("div");
+    group.className = "color-group";
+    const heading = document.createElement("h3");
+    heading.className = "color-group-h";
+    heading.textContent = fam;
+    const grid = document.createElement("div");
+    grid.className = "color-group-grid";
+    for (const c of arr) grid.appendChild(buildColorCard(c));
+    group.append(heading, grid);
+    rowsEl.appendChild(group);
+  }
+
   emptyHintEl.hidden = doc.palette.colors.length > 0;
+}
+
+function familyForHex(hex: string): string {
+  const norm = normalizeHexForInput(hex);
+  const rgb = norm ? hexToRgb(norm) : null;
+  if (!rgb) return "Other";
+  return familyOf(rgb.r * 255, rgb.g * 255, rgb.b * 255);
+}
+
+function lightnessOf(hex: string): number {
+  const norm = normalizeHexForInput(hex);
+  const rgb = norm ? hexToRgb(norm) : null;
+  return rgb ? rgbToOklch(rgb).L : 0;
 }
 
 /** One color = a rounded box (the color itself, click to recolor), the hex
@@ -253,7 +294,11 @@ function buildColorCard(row: { id: string; name: string; hex: string }): HTMLEle
   const el = document.createElement("div");
   el.className = "card";
 
-  // The box IS the color; clicking it opens the OS color picker.
+  // The box IS the color; clicking it opens the OS color picker. WebKitGTK
+  // won't honor aspect-ratio on a native color input, so a plain wrapper div
+  // drives the square and the input fills it.
+  const boxWrap = document.createElement("div");
+  boxWrap.className = "card-box-wrap";
   const box = document.createElement("input");
   box.type = "color";
   box.className = "card-box";
@@ -261,6 +306,7 @@ function buildColorCard(row: { id: string; name: string; hex: string }): HTMLEle
   const initial = normalizeHexForInput(row.hex);
   box.value = initial ?? "#000000";
   if (!initial) box.dataset.unknown = "true";
+  boxWrap.appendChild(box);
 
   const hexInput = document.createElement("input");
   hexInput.type = "text";
@@ -307,7 +353,7 @@ function buildColorCard(row: { id: string; name: string; hex: string }): HTMLEle
     wheelPanel.refresh();
   });
 
-  el.append(box, hexInput, nameInput, del);
+  el.append(boxWrap, hexInput, nameInput, del);
   return el;
 }
 
@@ -324,9 +370,6 @@ function buildPalettePanel(): HTMLElement {
   panelPalette = document.createElement("section");
   panelPalette.className = "panel panel-edit";
 
-  stripEl = document.createElement("div");
-  stripEl.id = "strip";
-
   const editor = document.createElement("div");
   editor.id = "editor";
   rowsEl = document.createElement("div");
@@ -341,46 +384,16 @@ function buildPalettePanel(): HTMLElement {
   addBtn.addEventListener("click", () => addColorRow());
   editor.append(rowsEl, emptyHintEl, addBtn);
 
-  // CSS export — a collapsed preview + an explicit "Export to CSS…".
-  const details = document.createElement("details");
-  details.className = "css-details";
-  const summary = document.createElement("summary");
-  const summaryLabel = document.createElement("span");
-  summaryLabel.textContent = "CSS export";
-  const exportBtn = document.createElement("button");
-  exportBtn.type = "button";
-  exportBtn.className = "css-export-btn";
-  exportBtn.textContent = "Export to CSS…";
-  exportBtn.addEventListener("click", (e) => { e.preventDefault(); void exportCss(); });
-  summary.append(summaryLabel, exportBtn);
-  cssOutEl = document.createElement("pre");
-  cssOutEl.id = "out-css";
-  details.append(summary, cssOutEl);
-
-  panelPalette.append(stripEl, editor, details);
+  // CSS export lives in the File menu (Export to CSS…), not inline here.
+  panelPalette.append(editor);
   return panelPalette;
 }
 
-// ---- Derived (CSS preview + strip + title) ----------------------------
+// ---- Derived (title + persistence) ------------------------------------
 
 function renderOutputs(): void {
-  cssOutEl.textContent = paletteToCss(doc.palette);
-  renderStrip();
   updateTitle();
   persist();
-}
-
-function renderStrip(): void {
-  stripEl.replaceChildren();
-  for (const c of doc.palette.colors) {
-    const sw = document.createElement("div");
-    sw.className = "strip-swatch";
-    const norm = normalizeHexForInput(c.hex);
-    if (norm) sw.style.background = norm;
-    else sw.dataset.unknown = "true";
-    sw.title = c.name ? `${c.name}: ${c.hex}` : c.hex;
-    stripEl.appendChild(sw);
-  }
 }
 
 /** The document name lives in the WM title; the dirty bullet rides the
@@ -556,6 +569,10 @@ function buildImagePanel(): HTMLElement {
   panelImage.className = "panel panel-image";
   panelImage.hidden = true;
 
+  const title = document.createElement("h2");
+  title.className = "panel-title";
+  title.textContent = "Import colors from an image";
+
   imageDrop = buildDropZone({
     label: "Drop an image here",
     hint: "or click to browse",
@@ -569,16 +586,16 @@ function buildImagePanel(): HTMLElement {
   imageThumb.className = "image-thumb";
   imageThumb.alt = "";
   imageThumb.hidden = true;
+  // Empty until an image is loaded, when it shows the image dimensions.
   imageHintEl = document.createElement("p");
   imageHintEl.className = "panel-hint";
-  imageHintEl.textContent =
-    "Drop or pick an image to pull its colors, grouped by family. Click a swatch to add it to the palette.";
+  imageHintEl.hidden = true;
   meta.append(imageThumb, imageHintEl);
 
   imageGroupsEl = document.createElement("div");
   imageGroupsEl.className = "image-groups";
 
-  panelImage.append(imageDrop.element, meta, imageGroupsEl);
+  panelImage.append(title, imageDrop.element, meta, imageGroupsEl);
   return panelImage;
 }
 
@@ -610,6 +627,7 @@ function renderExtraction(ext: Extraction): void {
   imageThumb.src = ext.thumbnailUrl;
   imageThumb.hidden = false;
   imageHintEl.textContent = `${ext.width} × ${ext.height} · click a swatch to add it`;
+  imageHintEl.hidden = false;
   imageGroupsEl.replaceChildren();
   for (const group of ext.groups) {
     const sec = document.createElement("div");

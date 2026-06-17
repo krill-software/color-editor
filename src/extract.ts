@@ -24,7 +24,7 @@ export interface Extraction {
 }
 
 // Fixed display order; empty families are dropped when rendering.
-const FAMILY_ORDER = [
+export const FAMILY_ORDER = [
   "Red", "Orange", "Yellow", "Green", "Cyan", "Blue", "Purple", "Pink", "Neutral",
 ];
 
@@ -35,7 +35,7 @@ const SAMPLE_MAX = 240; // longest side the image is downsampled to before count
 /** Which family a 0–255 RGB triple belongs to. Low-saturation or near-black /
  *  near-white colors are Neutral (their hue is meaningless); everything else
  *  falls into a hue band. */
-function familyOf(r: number, g: number, b: number): string {
+export function familyOf(r: number, g: number, b: number): string {
   const { h, s, l } = rgbToHsl({ r: r / 255, g: g / 255, b: b / 255 });
   if (s < 12 || l < 6 || l > 97) return "Neutral";
   if (h < 15 || h >= 345) return "Red";
