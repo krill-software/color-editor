@@ -1,7 +1,14 @@
 import "@krill-software/desktop-ui/styles";
 import "./styles.css";
 
-import { mountChrome, parseGpl, serializeGpl, showBootError } from "@krill-software/desktop-ui";
+import {
+  buildDropZone,
+  type DropZoneRefs,
+  mountChrome,
+  parseGpl,
+  serializeGpl,
+  showBootError,
+} from "@krill-software/desktop-ui";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -64,6 +71,7 @@ let rowsEl: HTMLElement;
 let emptyHintEl: HTMLElement;
 let stripEl: HTMLElement;
 let cssOutEl: HTMLElement;
+let imageDrop: DropZoneRefs;
 let imageThumb: HTMLImageElement;
 let imageHintEl: HTMLElement;
 let imageGroupsEl: HTMLElement;
@@ -235,61 +243,61 @@ function buildRandomizePanel(): HTMLElement {
 
 function renderRows(): void {
   rowsEl.replaceChildren();
-  for (const c of doc.palette.colors) rowsEl.appendChild(buildColorRow(c));
+  for (const c of doc.palette.colors) rowsEl.appendChild(buildColorCard(c));
   emptyHintEl.hidden = doc.palette.colors.length > 0;
 }
 
-function buildColorRow(row: { id: string; name: string; hex: string }): HTMLElement {
+/** One color = a rounded box (the color itself, click to recolor), the hex
+ *  under it (editable), and a name input. Delete reveals on hover. */
+function buildColorCard(row: { id: string; name: string; hex: string }): HTMLElement {
   const el = document.createElement("div");
-  el.className = "row";
+  el.className = "card";
 
-  const nameWrap = document.createElement("label");
-  nameWrap.className = "row-name";
-  const dashes = document.createElement("span");
-  dashes.className = "row-dashes";
-  dashes.textContent = "--";
-  const nameInput = document.createElement("input");
-  nameInput.type = "text";
-  nameInput.spellcheck = false;
-  nameInput.className = "row-name-input mono";
-  nameInput.placeholder = "name";
-  nameInput.value = row.name;
-  nameInput.addEventListener("input", () => setColorName(row.id, nameInput.value));
-  nameWrap.append(dashes, nameInput);
+  // The box IS the color; clicking it opens the OS color picker.
+  const box = document.createElement("input");
+  box.type = "color";
+  box.className = "card-box";
+  box.title = "Pick a color";
+  const initial = normalizeHexForInput(row.hex);
+  box.value = initial ?? "#000000";
+  if (!initial) box.dataset.unknown = "true";
 
   const hexInput = document.createElement("input");
   hexInput.type = "text";
   hexInput.spellcheck = false;
-  hexInput.className = "row-hex-input mono";
+  hexInput.className = "card-hex mono";
   hexInput.placeholder = "#rrggbb";
   hexInput.value = row.hex;
+  hexInput.setAttribute("aria-label", "Hex color");
 
-  const swatch = document.createElement("input");
-  swatch.type = "color";
-  swatch.className = "row-swatch";
-  const initial = normalizeHexForInput(row.hex);
-  swatch.value = initial ?? "#000000";
-  if (!initial) swatch.dataset.unknown = "true";
+  const nameInput = document.createElement("input");
+  nameInput.type = "text";
+  nameInput.spellcheck = false;
+  nameInput.className = "card-name mono";
+  nameInput.placeholder = "name";
+  nameInput.value = row.name;
+  nameInput.setAttribute("aria-label", "Color name");
+  nameInput.addEventListener("input", () => setColorName(row.id, nameInput.value));
 
   hexInput.addEventListener("input", () => {
     setColorHex(row.id, hexInput.value);
     const norm = normalizeHexForInput(hexInput.value);
     if (norm) {
-      swatch.value = norm;
-      delete swatch.dataset.unknown;
+      box.value = norm;
+      delete box.dataset.unknown;
     } else {
-      swatch.dataset.unknown = "true";
+      box.dataset.unknown = "true";
     }
   });
-  swatch.addEventListener("input", () => {
-    hexInput.value = swatch.value;
-    delete swatch.dataset.unknown;
-    setColorHex(row.id, swatch.value);
+  box.addEventListener("input", () => {
+    hexInput.value = box.value;
+    delete box.dataset.unknown;
+    setColorHex(row.id, box.value);
   });
 
   const del = document.createElement("button");
   del.type = "button";
-  del.className = "row-del";
+  del.className = "card-del";
   del.title = "Remove";
   del.textContent = "✕";
   del.addEventListener("click", () => {
@@ -299,7 +307,7 @@ function buildColorRow(row: { id: string; name: string; hex: string }): HTMLElem
     wheelPanel.refresh();
   });
 
-  el.append(nameWrap, hexInput, swatch, del);
+  el.append(box, hexInput, nameInput, del);
   return el;
 }
 
@@ -308,8 +316,8 @@ function addColorRow(): void {
   renderRows();
   shadesPanel.refresh();
   wheelPanel.refresh();
-  const last = rowsEl.lastElementChild?.querySelector<HTMLInputElement>(".row-name-input");
-  last?.focus();
+  const card = rowsEl.querySelector<HTMLElement>(".card:last-of-type");
+  card?.querySelector<HTMLInputElement>(".card-name")?.focus();
 }
 
 function buildPalettePanel(): HTMLElement {
@@ -370,7 +378,7 @@ function renderStrip(): void {
     const norm = normalizeHexForInput(c.hex);
     if (norm) sw.style.background = norm;
     else sw.dataset.unknown = "true";
-    sw.title = c.name ? `--${c.name}: ${c.hex}` : c.hex;
+    sw.title = c.name ? `${c.name}: ${c.hex}` : c.hex;
     stripEl.appendChild(sw);
   }
 }
@@ -514,12 +522,29 @@ function installKeyboard(): void {
 
 // ---- Drag-drop --------------------------------------------------------
 
+const IMAGE_RE = /\.(png|jpe?g|webp|gif|bmp)$/i;
+
 async function installFileDrop(): Promise<void> {
   const wv = getCurrentWebview();
   await wv.onDragDropEvent(async (e) => {
+    if (e.payload.type === "enter" || e.payload.type === "over") {
+      imageDrop.setDragActive(true);
+      return;
+    }
+    if (e.payload.type === "leave") {
+      imageDrop.setDragActive(false);
+      return;
+    }
     if (e.payload.type === "drop") {
+      imageDrop.setDragActive(false);
       const path = e.payload.paths[0];
-      if (path && /\.gpl$/i.test(path)) await openPath(path);
+      if (!path) return;
+      if (/\.gpl$/i.test(path)) {
+        await openPath(path);
+      } else if (IMAGE_RE.test(path)) {
+        setTab("image");
+        await loadImageFromPath(path);
+      }
     }
   });
 }
@@ -531,32 +556,29 @@ function buildImagePanel(): HTMLElement {
   panelImage.className = "panel panel-image";
   panelImage.hidden = true;
 
-  const head = document.createElement("div");
-  head.className = "image-head";
-  const loadBtn = document.createElement("button");
-  loadBtn.type = "button";
-  loadBtn.className = "image-load-btn";
-  loadBtn.append(svgIcon("image", 16));
-  const lbl = document.createElement("span");
-  lbl.textContent = "Load image…";
-  loadBtn.append(lbl);
-  loadBtn.addEventListener("click", () => void loadImageViaDialog());
+  imageDrop = buildDropZone({
+    label: "Drop an image here",
+    hint: "or click to browse",
+    icon: svgIcon("image", 28),
+    onActivate: () => void loadImageViaDialog(),
+  });
 
+  const meta = document.createElement("div");
+  meta.className = "image-meta";
   imageThumb = document.createElement("img");
   imageThumb.className = "image-thumb";
   imageThumb.alt = "";
   imageThumb.hidden = true;
-  head.append(loadBtn, imageThumb);
-
   imageHintEl = document.createElement("p");
   imageHintEl.className = "panel-hint";
   imageHintEl.textContent =
-    "Load an image to pull its colors, grouped by family. Click a swatch to add it to the palette.";
+    "Drop or pick an image to pull its colors, grouped by family. Click a swatch to add it to the palette.";
+  meta.append(imageThumb, imageHintEl);
 
   imageGroupsEl = document.createElement("div");
   imageGroupsEl.className = "image-groups";
 
-  panelImage.append(head, imageHintEl, imageGroupsEl);
+  panelImage.append(imageDrop.element, meta, imageGroupsEl);
   return panelImage;
 }
 
@@ -749,14 +771,6 @@ async function boot(): Promise<void> {
       if (dev) await openPath(dev);
     } catch {
       /* no fixture */
-    }
-  }
-  if (import.meta.env.DEV) {
-    try {
-      const img = await invoke<string | null>("dev_test_image");
-      if (img) await loadImageFromPath(img);
-    } catch {
-      /* no image fixture */
     }
   }
 }

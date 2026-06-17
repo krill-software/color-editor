@@ -94,10 +94,12 @@ from outside). Group labels are 11px uppercase mono, matching the suite.
 The **Discover** and **Tools** entries all **Add to palette**; the **Palette**
 tab is the document.
 
-- **Palette** *(the document — merges v3's Saved + Edit)* — the palette as an
-  editable, reorderable list: each row is `swatch · --name · hex · ✕`, above a
-  swatch strip of the whole set. `+ Add color`, drag to reorder, a collapsible
-  **CSS** preview, and **Export to CSS…**. This is what Save writes as `.gpl`.
+- **Palette** *(the document — merges v3's Saved + Edit)* — the palette as a
+  grid of color cards: each card is a rounded color box (click to recolor), the
+  hex under it, and a name input (names are bare — no `--`; CSS export adds
+  them). A swatch strip of the whole set sits above. `+ Add color`, a
+  collapsible **CSS** preview, and **Export to CSS…**. This is what Save writes
+  as `.gpl`.
 
 **Discover** — ways to get a color:
 
@@ -112,8 +114,10 @@ tab is the document.
 
 **Tools** — pull a color from outside:
 
-- **Image** — load an image; colors quantized and **grouped by hue family**
-  (Red…Pink + Neutrals). Click a swatch to add it to the palette.
+- **Image** — a file drop zone (drop an image or click to browse; no default
+  image); its colors are quantized and **grouped by hue family** (Red…Pink +
+  Neutrals). Click a swatch to add it to the palette. The drop zone is the
+  shared `buildDropZone` from desktop-ui.
 - **Screen** — pick a color from any pixel on screen, via the XDG desktop
   portal (`Screenshot.PickColor`). *Note: this is the eyedropper shelved in v3
   (git `21c4c4d`) because the portal pick returned nothing here — it needs the
