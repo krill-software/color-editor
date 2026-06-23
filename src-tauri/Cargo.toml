@@ -1,6 +1,6 @@
 [package]
 name = "krill-color-editor"
-version = "0.4.0"
+version = "0.4.1"
 description = "A minimal color scheme editor for Linux"
 authors = ["Filip"]
 edition = "2021"
