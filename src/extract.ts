@@ -3,7 +3,9 @@
 // Neutrals bucket for blacks / whites / grays). Within each family colors are
 // ordered by how much of the image they cover.
 
-import { rgbToHex, rgbToHsl } from "./oklch";
+import { familyOf, FAMILY_ORDER } from "@krill-software/desktop-ui";
+
+import { rgbToHex } from "./oklch";
 
 export interface FamilyColor {
   hex: string;
@@ -23,30 +25,9 @@ export interface Extraction {
   groups: FamilyGroup[];
 }
 
-// Fixed display order; empty families are dropped when rendering.
-export const FAMILY_ORDER = [
-  "Red", "Orange", "Yellow", "Green", "Cyan", "Blue", "Purple", "Pink", "Neutral",
-];
-
 const PER_FAMILY = 8;   // most-covering colors kept per family
 const QUANT_BITS = 3;   // drop low 3 bits/channel → 5-bit (32-level) buckets
 const SAMPLE_MAX = 240; // longest side the image is downsampled to before counting
-
-/** Which family a 0–255 RGB triple belongs to. Low-saturation or near-black /
- *  near-white colors are Neutral (their hue is meaningless); everything else
- *  falls into a hue band. */
-export function familyOf(r: number, g: number, b: number): string {
-  const { h, s, l } = rgbToHsl({ r: r / 255, g: g / 255, b: b / 255 });
-  if (s < 12 || l < 6 || l > 97) return "Neutral";
-  if (h < 15 || h >= 345) return "Red";
-  if (h < 45) return "Orange";
-  if (h < 65) return "Yellow";
-  if (h < 150) return "Green";
-  if (h < 195) return "Cyan";
-  if (h < 255) return "Blue";
-  if (h < 290) return "Purple";
-  return "Pink";
-}
 
 export async function extractPalette(bytes: Uint8Array<ArrayBuffer>): Promise<Extraction> {
   const blob = new Blob([bytes]);

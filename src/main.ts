@@ -4,6 +4,8 @@ import "./styles.css";
 import {
   buildDropZone,
   type DropZoneRefs,
+  FAMILY_ORDER,
+  familyOf,
   mountChrome,
   parseGpl,
   serializeGpl,
@@ -16,7 +18,7 @@ import { getMatches } from "@tauri-apps/plugin-cli";
 import { confirm, open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import { paletteToCss } from "./css";
-import { extractPalette, familyOf, FAMILY_ORDER, type Extraction } from "./extract";
+import { extractPalette, type Extraction } from "./extract";
 import { hexToRgb, oklchToRgbClamped, rgbToHex, rgbToOklch } from "./oklch";
 import { buildPickerPanel, type PickerPanel } from "./picker";
 import { buildShadesPanel, type ShadesPanel } from "./shades";
